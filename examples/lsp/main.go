@@ -35,11 +35,11 @@ type CompletionParams struct {
 }
 
 type CompletionItem struct {
-	Label         string  `json:"label"`
-	Kind          int     `json:"kind,omitempty"`
-	Detail        *string `json:"detail,omitempty"`
-	Documentation string  `json:"documentation,omitempty"`
-	InsertText    string  `json:"insertText,omitempty"`
+	Label         string      `json:"label"`
+	Kind          int         `json:"kind,omitempty"`
+	Detail        *string     `json:"detail,omitempty"`
+	Documentation interface{} `json:"documentation,omitempty"`
+	InsertText    string      `json:"insertText,omitempty"`
 }
 
 type CompletionList struct {
@@ -70,21 +70,21 @@ type JSONRPCResponse struct {
 
 // LSP客户端结构体
 type LSPClient struct {
-	stdin         io.WriteCloser
-	stdout        io.ReadCloser
-	cmd           *exec.Cmd
-	requestID     int
-	initialized   bool
-	workspacePath string
-	fileURI       string
-	mutex         sync.Mutex
+	stdin            io.WriteCloser
+	stdout           io.ReadCloser
+	cmd              *exec.Cmd
+	requestID        int
+	initialized      bool
+	workspacePath    string
+	fileURI          string
+	mutex            sync.Mutex
 	notificationChan chan *JSONRPCNotification
 }
 
 // 创建新的LSP客户端
 func NewLSPClient(ctx context.Context, workspacePath, fileURI string) (*LSPClient, error) {
 	fmt.Println("[DEBUG] 创建LSPClient...")
-	
+
 	// 检查gopls是否存在
 	goplsPath, err := exec.LookPath("gopls")
 	if err != nil {
@@ -92,7 +92,7 @@ func NewLSPClient(ctx context.Context, workspacePath, fileURI string) (*LSPClien
 		return nil, fmt.Errorf("找不到gopls命令，请确保已安装: %w", err)
 	}
 	fmt.Printf("[DEBUG] 找到gopls: %s\n", goplsPath)
-	
+
 	// 启动gopls进程
 	fmt.Println("[DEBUG] 启动gopls进程...")
 	cmd := exec.Command(goplsPath, "serve")
@@ -135,9 +135,9 @@ func NewLSPClient(ctx context.Context, workspacePath, fileURI string) (*LSPClien
 		fileURI:          fileURI,
 		notificationChan: make(chan *JSONRPCNotification, 10),
 	}
-	
-	// 启动通知处理协程
-	go client.handleNotifications()
+
+	// 启动通知处理协程（已禁用以避免读取冲突）
+	// go client.handleNotifications()
 
 	// 初始化LSP连接
 	err = client.initialize(ctx)
@@ -153,7 +153,7 @@ func NewLSPClient(ctx context.Context, workspacePath, fileURI string) (*LSPClien
 func (c *LSPClient) sendMessage(message []byte) error {
 	// 构建LSP协议头
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(message))
-	
+
 	fmt.Printf("[DEBUG] 发送消息头: %v\n", header)
 	fmt.Printf("[DEBUG] 发送消息体前100字节: %s\n", string(message)[:min(100, len(message))])
 
@@ -171,7 +171,7 @@ func (c *LSPClient) sendMessage(message []byte) error {
 // 接收LSP消息
 func (c *LSPClient) receiveMessage() ([]byte, error) {
 	fmt.Println("[DEBUG] 开始接收消息...")
-	
+
 	// 使用带缓冲的reader来读取响应
 	reader := bufio.NewReader(c.stdout)
 	contentLength := 0
@@ -188,7 +188,7 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 		line = strings.TrimRight(line, "\r\n")
 		headerLines = append(headerLines, line)
 		fmt.Printf("[DEBUG] 读取到头部行: '%s'\n", line)
-		
+
 		if line == "" {
 			// 头结束，开始读取消息体
 			break
@@ -208,7 +208,7 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 	}
 
 	fmt.Printf("[DEBUG] 所有头部行: %v\n", headerLines)
-	
+
 	if contentLength == 0 {
 		fmt.Println("[DEBUG] 警告: Content-Length为0")
 		return nil, fmt.Errorf("接收到的消息没有Content-Length头")
@@ -218,10 +218,10 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 	fmt.Printf("[DEBUG] 开始读取消息体，大小: %d 字节\n", contentLength)
 	message := make([]byte, contentLength)
 	totalRead := 0
-	
+
 	// 增加读取超时时间，使用一个总的超时控制
 	timeout := time.Now().Add(30 * time.Second) // 增加到30秒
-	
+
 	// 分批读取，每次读取更多数据
 	for totalRead < contentLength {
 		// 检查是否超时
@@ -229,12 +229,12 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 			fmt.Printf("[DEBUG] 读取消息体超时，已读取 %d/%d 字节\n", totalRead, contentLength)
 			return nil, fmt.Errorf("读取消息体超时")
 		}
-		
+
 		// 增大每次读取的缓冲区
 		bytesToRead := min(contentLength-totalRead, 4096) // 增大到4096字节
-		
+
 		// bufio.Reader没有Deadline字段，我们依靠外部的超时检查
-		
+
 		// 尝试读取数据
 		bytesRead, err := reader.Read(message[totalRead : totalRead+bytesToRead])
 		if err != nil {
@@ -247,29 +247,29 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 			fmt.Printf("[DEBUG] 读取消息体失败，已读取 %d/%d 字节: %v\n", totalRead+bytesRead, contentLength, err)
 			return nil, fmt.Errorf("读取消息体失败: %w", err)
 		}
-		
+
 		if bytesRead == 0 {
 			// 没有读取到数据，等待一下再试
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-		
+
 		totalRead += bytesRead
 		fmt.Printf("[DEBUG] 已读取 %d/%d 字节\n", totalRead, contentLength)
 	}
-	
+
 	// 检查是否读取了所有数据
 	if totalRead < contentLength {
 		fmt.Printf("[DEBUG] 警告：只读取了 %d/%d 字节\n", totalRead, contentLength)
 		// 返回已读取的数据，但这可能会导致后续解析错误
 		message = message[:totalRead]
 	}
-	
+
 	fmt.Printf("[DEBUG] 成功读取消息体，共 %d 字节\n", len(message))
 	if len(message) > 0 {
 		fmt.Printf("[DEBUG] 消息体前100字节: %s\n", string(message)[:min(100, len(message))])
 	}
-	
+
 	return message, nil
 }
 
@@ -277,15 +277,15 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 func (c *LSPClient) handleNotifications() {
 	defer close(c.notificationChan)
 	fmt.Println("[DEBUG] 通知处理协程已启动")
-	
+
 	// 创建单独的reader用于通知处理，避免与主请求流程冲突
 	notificationReader := bufio.NewReader(c.stdout)
-	
+
 	for {
 		// 首先读取头部
 		contentLength := 0
 		headerLines := []string{}
-		
+
 		for {
 			line, err := notificationReader.ReadString('\n')
 			if err != nil {
@@ -297,15 +297,15 @@ func (c *LSPClient) handleNotifications() {
 				// 继续尝试，不返回
 				break
 			}
-			
+
 			line = strings.TrimRight(line, "\r\n")
 			headerLines = append(headerLines, line)
-			
+
 			if line == "" {
 				// 头部结束
 				break
 			}
-			
+
 			if strings.HasPrefix(line, "Content-Length:") {
 				lengthStr := strings.TrimPrefix(line, "Content-Length:")
 				lengthStr = strings.TrimSpace(lengthStr)
@@ -314,31 +314,31 @@ func (c *LSPClient) handleNotifications() {
 				}
 			}
 		}
-		
+
 		if contentLength <= 0 {
 			// 没有有效的Content-Length，跳过
 			continue
 		}
-		
+
 		// 读取消息体
 		message := make([]byte, contentLength)
 		if _, err := io.ReadFull(notificationReader, message); err != nil {
 			fmt.Printf("[DEBUG] 读取通知消息体失败: %v\n", err)
 			continue
 		}
-		
+
 		// 尝试解析消息
 		var combinedMsg map[string]interface{}
 		if err := json.Unmarshal(message, &combinedMsg); err != nil {
 			continue
 		}
-		
+
 		// 检查是否是通知（没有id字段）
 		if _, hasID := combinedMsg["id"]; !hasID {
 			if method, ok := combinedMsg["method"].(string); ok {
 				// 这是一个通知
 				params := combinedMsg["params"]
-				
+
 				// 只处理重要的通知
 				switch method {
 				case "window/showMessage":
@@ -441,7 +441,7 @@ func (c *LSPClient) sendNotification(method string, params interface{}) error {
 // 初始化LSP连接
 func (c *LSPClient) initialize(ctx context.Context) error {
 	fmt.Println("[DEBUG] 开始初始化LSP连接...")
-	
+
 	// 构建initialize请求参数
 	params := map[string]interface{}{
 		"processId": os.Getpid(),
@@ -463,11 +463,11 @@ func (c *LSPClient) initialize(ctx context.Context) error {
 		return err
 	}
 	fmt.Println("[DEBUG] 收到initialize响应")
-	
+
 	// 打印initialize响应内容（简略）
 	if result != nil {
 		resultBytes, _ := json.Marshal(result)
-		fmt.Printf("[DEBUG] Initialize响应: %s\n", string(resultBytes)[:100] + "...")
+		fmt.Printf("[DEBUG] Initialize响应: %s\n", string(resultBytes)[:100]+"...")
 	}
 
 	// 发送initialized通知
@@ -600,52 +600,54 @@ func findCursorPosition(code string) (line, character int) {
 func getCompletionItemKindText(kind int) string {
 	switch kind {
 	case 1:
-		return "method"
+		return "text"
 	case 2:
-		return "func"
+		return "method"
 	case 3:
-		return "constructor"
+		return "func"
 	case 4:
-		return "field"
+		return "constructor"
 	case 5:
-		return "var"
+		return "field"
 	case 6:
-		return "class"
+		return "var"
 	case 7:
-		return "interface"
+		return "class"
 	case 8:
-		return "module"
+		return "interface"
 	case 9:
-		return "property"
+		return "module"
 	case 10:
-		return "unit"
+		return "property"
 	case 11:
-		return "value"
+		return "unit"
 	case 12:
-		return "enum"
+		return "value"
 	case 13:
-		return "keyword"
+		return "enum"
 	case 14:
-		return "snippet"
+		return "keyword"
 	case 15:
-		return "color"
+		return "snippet"
 	case 16:
-		return "file"
+		return "color"
 	case 17:
-		return "reference"
+		return "file"
 	case 18:
-		return "folder"
+		return "reference"
 	case 19:
-		return "enum member"
+		return "folder"
 	case 20:
-		return "const"
+		return "enum member"
 	case 21:
-		return "struct"
+		return "const"
 	case 22:
-		return "event"
+		return "struct"
 	case 23:
-		return "operator"
+		return "event"
 	case 24:
+		return "operator"
+	case 25:
 		return "type parameter"
 	default:
 		return ""
@@ -664,6 +666,7 @@ func printCompletions(completions *CompletionList) {
 	fmt.Println("----------------------------------------")
 
 	for _, item := range completions.Items {
+		fmt.Printf("%#v\n", item)
 		kindText := getCompletionItemKindText(item.Kind)
 		detail := ""
 		if item.Detail != nil {
@@ -688,11 +691,14 @@ func main() {
 
 	// 示例代码，包含fmt包导入和fmt.调用点 - 使用更完整的代码示例
 	code := `package main
-import "fmt"
+
+func getName( s string) string {
+	return s
+}
 
 func main() {
 	// 在这里我们使用fmt包，触发补全
-	fmt.
+	log.
 }`
 
 	// 创建临时文件
@@ -704,7 +710,7 @@ func main() {
 	defer os.RemoveAll(tmpDir)
 
 	tmpFile := filepath.Join(tmpDir, "main.go")
-	err = os.WriteFile(tmpFile, []byte(code), 0644)
+	err = os.WriteFile(tmpFile, []byte(code), 0o644)
 	if err != nil {
 		fmt.Printf("写入临时文件失败: %v\n", err)
 		return

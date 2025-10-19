@@ -1,151 +1,131 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
-
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
-
-// 补全建议项
-type completionItem struct {
-	text        string // 补全文本
-	description string // 描述（可选）
-}
-
-// 实现 list.Item 接口（用于在列表中展示）
-func (i completionItem) Title() string       { return i.text }
-func (i completionItem) Description() string { return i.description }
-func (i completionItem) FilterValue() string { return i.text }
-
-// 应用状态
-type model struct {
-	input           textinput.Model  // 输入框组件
-	completionList  list.Model       // 补全建议列表
-	showCompletions bool             // 是否显示补全列表
-	completions     []completionItem // 所有补全建议
-}
 
 func main() {
 	// 初始化输入框
-	input := textinput.New()
-	input.Placeholder = "输入命令..."
-	input.Focus()
-	input.Prompt = "> "
+	code := `package main
 
-	// 初始化补全列表（样式通过 lipgloss 定制）
-	items := []list.Item{}
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.NormalTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	delegate.Styles.NormalDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	delegate.Styles.SelectedTitle = lipgloss.NewStyle().Background(lipgloss.Color("32")).Foreground(lipgloss.Color("white"))
-	delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle.Copy()
-	completionList := list.New(items, delegate, 0, 0)
-	completionList.Title = "补全建议"
-	completionList.SetHeight(5) // 限制补全列表高度为 5 行
+import (
+	"fmt"
+	"time"
+)
 
-	// 启动应用
-	m := model{
-		input:          input,
-		completionList: completionList,
-	}
-	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		panic(err)
-	}
+func getName(s string) string {
+	return s
 }
 
-// 初始化：返回空命令
-func (m model) Init() tea.Cmd {
-	return textinput.Blink
+func main() {
+	// 在这里我们使用fmt包，触发补全
+	fmt.Println(time.Now())
+	a := 1
+	var b int
+}`
+	// TODO: 创建一个方法，将 code 中 golang 代码 main 方法中未被引用的字段指向 _ 然后加到 main 方法的最后，总结就是保留字段，但是不能让代码运行报错
+	processedCode, err := processCode(code)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error processing code: %v\n", err)
+		return
+	}
+	fmt.Println(processedCode)
 }
 
-// 更新状态（处理输入和补全逻辑）
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		// 退出程序
-		if msg.Type == tea.KeyCtrlC {
-			return m, tea.Quit
-		}
+// processCode finds unused variables in the main function of the provided Go code
+// and adds assignments to the blank identifier (_) to make the code compile.
+func processCode(code string) (string, error) {
+	tmpDir, err := os.MkdirTemp("", "go-process-")
+	if err != nil {
+		return "", fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-		// Tab 键或 Enter 键触发补全（或选择当前高亮的建议）
-		if msg.Type == tea.KeyTab || msg.Type == tea.KeyEnter {
-			if m.showCompletions && len(m.completionList.Items()) > 0 {
-				// 应用选中的补全项
-				selected := m.completionList.SelectedItem().(completionItem)
-				m.input.SetValue(selected.text)
-				m.input.SetCursor(len(selected.text))
-				m.showCompletions = false // 隐藏补全列表
-			} else {
-				// 生成补全建议（这里是示例，实际可对接 gopls 等）
-				m.generateCompletions()
-				m.showCompletions = true
-			}
-			return m, nil
-		}
-
-		// 上下键导航补全列表
-		if m.showCompletions {
-			switch msg.Type {
-			case tea.KeyUp, tea.KeyDown:
-				var cmd tea.Cmd
-				m.completionList, cmd = m.completionList.Update(msg)
-				return m, cmd
-			}
-		}
-
-		// 其他按键：更新输入框，并根据输入实时过滤补全建议
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-
-		// 输入变化时，重新生成补全建议（可添加防抖优化）
-		m.generateCompletions()
-		m.showCompletions = len(m.completionList.Items()) > 0
-		return m, cmd
+	tmpFile := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(tmpFile, []byte(code), 0644); err != nil {
+		return "", fmt.Errorf("writing temp file: %w", err)
 	}
 
-	// 处理列表和输入框的其他消息
-	var cmd tea.Cmd
-	m.completionList, cmd = m.completionList.Update(msg)
-	return m, cmd
-}
-
-// 生成补全建议（示例：简单匹配，实际可对接 gopls 或自定义数据源）
-func (m *model) generateCompletions() {
-	// 模拟补全数据源（实际可替换为 gopls 返回的补全项）
-	allCompletions := []completionItem{
-		{text: "fmt.Println", description: "打印到标准输出"},
-		{text: "fmt.Printf", description: "格式化打印"},
-		{text: "os.Open", description: "打开文件"},
-		{text: "strings.Contains", description: "检查字符串包含"},
+	// Initialize a temporary go module.
+	modCmd := exec.Command("go", "mod", "init", "tmpmodule")
+	modCmd.Dir = tmpDir
+	var modErr bytes.Buffer
+	modCmd.Stderr = &modErr
+	if err := modCmd.Run(); err != nil {
+		return "", fmt.Errorf("go mod init failed: %s", modErr.String())
 	}
 
-	// 根据当前输入过滤补全项
-	input := m.input.Value()
-	filtered := []completionItem{}
-	for _, item := range allCompletions {
-		if strings.HasPrefix(item.text, input) {
-			filtered = append(filtered, item)
+	// Run 'go build' and capture stderr. We expect it to fail if there are unused vars.
+	cmd := exec.Command("go", "build")
+	cmd.Dir = tmpDir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Run()
+
+	// Regex to find "declared and not used: var" errors.
+	re := regexp.MustCompile(`(?m)^.*: declared and not used: (\w+)$`)
+	matches := re.FindAllStringSubmatch(stderr.String(), -1)
+
+	var unusedVars []string
+	for _, match := range matches {
+		if len(match) > 1 {
+			unusedVars = append(unusedVars, match[1])
 		}
 	}
 
-	// 更新补全列表
-	listItems := make([]list.Item, len(filtered))
-	for i, item := range filtered {
-		listItems[i] = item
+	if len(unusedVars) == 0 {
+		// No unused variables found, or a different build error occurred.
+		// For this task, we assume other errors are not present and return the original code.
+		return code, nil
 	}
-	m.completionList.SetItems(listItems)
-}
 
-// 渲染界面
-func (m model) View() string {
-	// 输入框 + 补全列表（如果显示）
-	var completionView string
-	if m.showCompletions {
-		completionView = "\n" + m.completionList.View()
+	// Use AST to find the position of the main function's closing brace.
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "", code, 0)
+	if err != nil {
+		return "", fmt.Errorf("parsing code: %w", err)
 	}
-	return m.input.View() + completionView + "\n"
+
+	var mainFuncEnd token.Pos = -1
+	ast.Inspect(node, func(n ast.Node) bool {
+		if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == "main" {
+			mainFuncEnd = fn.Body.Rbrace
+			return false // Stop searching
+		}
+		return true
+	})
+
+	if mainFuncEnd == -1 {
+		return "", fmt.Errorf("main function not found")
+	}
+
+	// The position is a 1-based offset from the beginning of the file.
+	offset := fset.File(mainFuncEnd).Offset(mainFuncEnd)
+
+	var assignments strings.Builder
+	for _, v := range unusedVars {
+		assignments.WriteString(fmt.Sprintf("\n\t_ = %s", v))
+	}
+
+	// Insert the assignments before the closing brace.
+	newCode := code[:offset] + assignments.String() + "\n" + code[offset:]
+
+	// Format the resulting code for proper indentation.
+	formatted, err := format.Source([]byte(newCode))
+	if err != nil {
+		// If formatting fails, return the unformatted version.
+		return newCode, nil
+	}
+
+	return string(formatted), nil
 }

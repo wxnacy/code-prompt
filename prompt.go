@@ -1,50 +1,61 @@
 package prompt
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/wxnacy/code-prompt/pkg/tui"
 )
 
+type (
+	CompletionFunc func(input string) []CompletionItem
+	OutFunc        func(input string) string
+
+	EmptyMsg struct{}
+)
+
+func Empty() tea.Msg {
+	return EmptyMsg{}
+}
+
 func NewPrompt(opts ...Option) *Prompt {
-	// input := textinput.New()
-	// input.Focus()
-	// input.Prompt = ">>> "
-	// input.SetSuggestions([]string{
-	// "import",
-	// "fmt.Println()",
-	// })
-
-	// input2 := huh.NewInput().Suggestions([]string{
-	// "import",
-	// "fmt.Println()",
-	// }).Prompt(">>> ")
-	// input2.Focus()
-
 	m := &Prompt{
-		width:  100,
-		input:  NewInput(),
-		KeyMap: DefaultPromptKeyMap(),
+		width:    100,
+		prompt:   ">>> ",
+		KeyMap:   DefaultPromptKeyMap(),
+		outFunc:  func(input string) string { return input },
+		historys: make([]*History, 0),
 	}
 	for _, opt := range opts {
 		opt(m)
 	}
+	m.input = m.NewInput()
 	return m
 }
 
 type Prompt struct {
+	BaseModel
 	width  int
 	height int
 	prompt string
 
-	completionItems []CompletionItem
+	// history
+	historys []*History
 
-	// input      textinput.Model
-	// input2     *huh.Input
-	input      *Input
-	completion *Completion
+	// completion
+	completionItems      []CompletionItem
+	completionFunc       CompletionFunc
+	completion           *Completion
+	completionToggleText string // 触发补全的内容
+
+	// input
+	input *Input
+	// inputText string
+
+	// out
+	outFunc OutFunc
 
 	KeyMap PromptKeyMap
 }
@@ -54,15 +65,30 @@ func (m Prompt) Init() tea.Cmd {
 }
 
 func (m Prompt) View() string {
-	inputView := m.input.View()
-
-	completionView := m.GetCompletionView()
+	views := make([]string, 0)
+	if m.historys != nil && len(m.historys) > 0 {
+		for _, history := range m.historys {
+			views = append(views, history.View())
+		}
+	}
+	views = append(views, m.input.View())
+	views = append(views, m.GetCompletionView())
 	view := lipgloss.JoinVertical(
 		lipgloss.Top,
-		inputView,
-		completionView,
+		views...,
 	)
 	return view
+}
+
+// 其他按键：更新输入框，并根据输入实时过滤补全建议
+func (m *Prompt) UpdateInput(msg tea.Msg) tea.Cmd {
+	input, cmd := m.input.Update(msg)
+	m.input = input.(*Input)
+	// value := m.input.Model.Value()
+	// if value != m.inputText {
+	// m.inputText = value
+	// }
+	return cmd
 }
 
 func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -71,22 +97,43 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	// 键位操作
 	case tea.KeyMsg:
+
 		// 全局键位
 		switch {
 		// 退出程序
 		case key.Matches(msg, m.KeyMap.Exit):
 			return m, tea.Quit
+		case key.Matches(msg, m.KeyMap.Enter):
+			value := m.input.Model.Value()
+			out := value
+			if m.outFunc != nil {
+				out = m.outFunc(value)
+			}
+			m.AppendHistory(out)
+			m.input = m.NewInput()
+			m.completion = nil
+			return m, Empty
 		}
 		// 组件键位监听 begin
-		// 其他按键：更新输入框，并根据输入实时过滤补全建议
-		input, cmd := m.input.Update(msg)
+		cmd = m.UpdateInput(msg)
 		cmds = append(cmds, cmd)
-		m.input = input.(*Input)
 
-		// value := m.input.Model.Value()
+		value := m.input.Model.Value()
+		toggleText := m.completionToggleText
+		if toggleText == "" {
+			toggleText = value
+		}
+		newCompletionItems := m.filterCompletionItems(toggleText)
+		if newCompletionItems != nil && len(newCompletionItems) > 0 {
+			m.completion = NewCompletion(newCompletionItems)
+			m.completionToggleText = toggleText
+		} else {
+			m.completion = nil
+			m.completionToggleText = ""
+		}
 
 		// 补全键位监听
-		if key.Matches(msg, m.completion.KeyMap.ListenKeys()...) {
+		if m.completion != nil && key.Matches(msg, m.completion.KeyMap.ListenKeys()...) {
 			completion, cmd := m.completion.Update(msg)
 			cmds = append(cmds, cmd)
 			m.completion = completion.(*Completion)
@@ -99,8 +146,6 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// 组件键位监听 end
-
-		// 输入变化时，重新生成补全建议（可添加防抖优化）
 		return m, tea.Batch(cmds...)
 	}
 
@@ -108,23 +153,21 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Prompt) FilterCompletionItems() []CompletionItem {
-	return nil
-}
-
-func (m Prompt) GetAction() string {
-	return ""
-}
-
-func (m Prompt) GetActionPayload() any {
-	return nil
-}
-
-func (m *Prompt) Restore(old tui.Model) {
-}
-
 func (m *Prompt) Width(w int) {
 	m.width = w
+}
+
+func (m *Prompt) AppendHistory(outText string) {
+	out := NewOut(outText)
+	if outText == "" {
+		out = nil
+	}
+	h := NewHistory(m.input, out)
+	m.historys = append(m.historys, h)
+}
+
+func (m *Prompt) CompletionFunc(f CompletionFunc) {
+	m.completionFunc = f
 }
 
 func (m Prompt) GetCompletionView() string {
@@ -134,11 +177,35 @@ func (m Prompt) GetCompletionView() string {
 	return ""
 }
 
+func (m Prompt) filterCompletionItems(value string) []CompletionItem {
+	if m.completionFunc != nil {
+		return m.completionFunc(value)
+	}
+	newCompletionItems := make([]CompletionItem, 0)
+	for _, item := range m.completionItems {
+		if strings.HasPrefix(item.Text, value) {
+			newCompletionItems = append(newCompletionItems, item)
+		}
+	}
+	return newCompletionItems
+}
+
+// Input begin ==================
+
+func (m Prompt) NewInput() *Input {
+	input := NewInput()
+	input.Model.Prompt = m.prompt
+	return input
+}
+
+// Input end   ==================
+
 type Option func(*Prompt)
 
 func WithPrompt(s string) Option {
 	return func(p *Prompt) {
-		p.input.Model.Prompt = s
+		p.prompt = s
+		// p.input.Model.Prompt = s
 	}
 }
 
@@ -151,8 +218,11 @@ func WithWidth(w int) Option {
 func WithCompletions(items []CompletionItem) Option {
 	return func(p *Prompt) {
 		p.completionItems = items
-		if len(items) > 0 {
-			p.completion = NewCompletion(items)
-		}
+	}
+}
+
+func WithOutFunc(f OutFunc) Option {
+	return func(p *Prompt) {
+		p.outFunc = f
 	}
 }

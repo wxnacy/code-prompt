@@ -21,8 +21,8 @@ func DefaultCompletionKeyMap() CompletionKeyMap {
 
 type CompletionKeyMap struct {
 	// FullHelp
-	NextCompletion key.Binding // ShortHelp
-	PrevCompletion key.Binding // ShortHelp
+	NextCompletion key.Binding // ShortHelp ListenKeys
+	PrevCompletion key.Binding // ShortHelp ListenKeys
 }
 
 func (km CompletionKeyMap) ShortHelp() []key.Binding {
