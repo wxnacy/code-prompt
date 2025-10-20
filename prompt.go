@@ -7,14 +7,18 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/wxnacy/code-prompt/pkg/log"
 )
 
 type (
-	CompletionFunc func(input string) []CompletionItem
-	OutFunc        func(input string) string
+	CompletionFunc       func(input string, cursor int) []CompletionItem
+	CompletionSelectFunc func(p *Prompt, input string, cursor int, selected CompletionItem)
+	OutFunc              func(input string) string
 
 	EmptyMsg struct{}
 )
+
+var logger = log.GetLogger()
 
 func Empty() tea.Msg {
 	return EmptyMsg{}
@@ -28,6 +32,8 @@ func NewPrompt(opts ...Option) *Prompt {
 		outFunc:  func(input string) string { return input },
 		historys: make([]*History, 0),
 	}
+	WithCompletionFunc(m.DefaultCompletionFunc)(m)
+	WithCompletionSelectFunc(DefaultCompletionSelectFunc)(m)
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -45,9 +51,10 @@ type Prompt struct {
 	historys []*History
 
 	// completion
-	completionItems []CompletionItem
-	completionFunc  CompletionFunc
-	completion      *Completion
+	completionItems      []CompletionItem
+	completionFunc       CompletionFunc
+	completionSelectFunc CompletionSelectFunc
+	completion           *Completion
 
 	// input
 	input *Input
@@ -82,10 +89,6 @@ func (m Prompt) View() string {
 func (m *Prompt) UpdateInput(msg tea.Msg) tea.Cmd {
 	input, cmd := m.input.Update(msg)
 	m.input = input.(*Input)
-	// value := m.input.Model.Value()
-	// if value != m.inputText {
-	// m.inputText = value
-	// }
 	return cmd
 }
 
@@ -102,7 +105,7 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.KeyMap.Exit):
 			return m, tea.Quit
 		case key.Matches(msg, m.KeyMap.Enter):
-			value := m.input.Model.Value()
+			value := m.Value()
 			out := value
 			if m.outFunc != nil {
 				out = m.outFunc(value)
@@ -122,20 +125,25 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if key.Matches(msg, m.completion.KeyMap.NextCompletion, m.completion.KeyMap.PrevCompletion) {
 				selected := m.completion.GetSelected()
-				m.input.Model.SetValue(selected.Text)
-				m.input.Model.SetCursor(len(selected.Text))
+				// 触发选择补全的方法
+				if m.completionSelectFunc != nil {
+					m.completionSelectFunc(m, m.Value(), m.input.Model.Position(), selected)
+				}
 			}
 
 		} else {
 			cmd = m.UpdateInput(msg)
 			cmds = append(cmds, cmd)
 
-			value := m.input.Model.Value()
-			newCompletionItems := m.filterCompletionItems(value)
-			if newCompletionItems != nil && len(newCompletionItems) > 0 {
-				m.completion = NewCompletion(newCompletionItems)
-			} else {
-				m.completion = nil
+			value := m.Value()
+			// 使用补全方法获取自全列表
+			if m.completionFunc != nil {
+				newCompletionItems := m.completionFunc(value, m.input.Model.Position())
+				if newCompletionItems != nil && len(newCompletionItems) > 0 {
+					m.completion = NewCompletion(newCompletionItems)
+				} else {
+					m.completion = nil
+				}
 			}
 		}
 		// 组件键位监听 end
@@ -163,24 +171,27 @@ func (m *Prompt) CompletionFunc(f CompletionFunc) {
 	m.completionFunc = f
 }
 
+func (m *Prompt) DefaultCompletionFunc(input string, cursor int) []CompletionItem {
+	newCompletionItems := make([]CompletionItem, 0)
+	for _, item := range m.completionItems {
+		if strings.HasPrefix(item.Text, input) {
+			newCompletionItems = append(newCompletionItems, item)
+		}
+	}
+	logger.Debugf("Completion items length %d", len(newCompletionItems))
+	return newCompletionItems
+}
+
+func DefaultCompletionSelectFunc(p *Prompt, input string, cursor int, selected CompletionItem) {
+	p.input.Model.SetValue(selected.Text)
+	p.input.Model.SetCursor(len(selected.Text))
+}
+
 func (m Prompt) GetCompletionView() string {
 	if m.completion != nil {
 		return m.completion.View()
 	}
 	return ""
-}
-
-func (m Prompt) filterCompletionItems(value string) []CompletionItem {
-	if m.completionFunc != nil {
-		return m.completionFunc(value)
-	}
-	newCompletionItems := make([]CompletionItem, 0)
-	for _, item := range m.completionItems {
-		if strings.HasPrefix(item.Text, value) {
-			newCompletionItems = append(newCompletionItems, item)
-		}
-	}
-	return newCompletionItems
 }
 
 // Input begin ==================
@@ -189,6 +200,10 @@ func (m Prompt) NewInput() *Input {
 	input := NewInput()
 	input.Model.Prompt = m.prompt
 	return input
+}
+
+func (m Prompt) Value() string {
+	return m.input.Model.Value()
 }
 
 // Input end   ==================
@@ -223,5 +238,11 @@ func WithOutFunc(f OutFunc) Option {
 func WithCompletionFunc(f CompletionFunc) Option {
 	return func(p *Prompt) {
 		p.completionFunc = f
+	}
+}
+
+func WithCompletionSelectFunc(f CompletionSelectFunc) Option {
+	return func(p *Prompt) {
+		p.completionSelectFunc = f
 	}
 }

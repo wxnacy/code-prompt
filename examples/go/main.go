@@ -75,8 +75,8 @@ func main() {
 		prompt.WithOutFunc(func(input string) string {
 			return insertCodeAndRun(input)
 		}),
-		prompt.WithCompletionFunc(func(input string) []prompt.CompletionItem {
-			return completionFunc(input, client, ctx)
+		prompt.WithCompletionFunc(func(input string, cursor int) []prompt.CompletionItem {
+			return completionFunc(input, cursor, client, ctx)
 		}),
 	)
 	err = tui.NewTerminal(p).Run()
@@ -85,7 +85,7 @@ func main() {
 	}
 }
 
-func completionFunc(input string, client *lsp.LSPClient, ctx context.Context) []prompt.CompletionItem {
+func completionFunc(input string, cursor int, client *lsp.LSPClient, ctx context.Context) []prompt.CompletionItem {
 	fileVersion++
 	// 根据输入，使用 client 获取补全结果，代码临时存放在 client.fileURI 中
 	tpl := `package main
