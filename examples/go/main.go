@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -13,29 +14,66 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/sirupsen/logrus"
 	prompt "github.com/wxnacy/code-prompt"
+	"github.com/wxnacy/code-prompt/pkg/lsp"
 	"github.com/wxnacy/code-prompt/pkg/tui"
 )
 
+var logger = prompt.GetLogger()
+
 func main() {
-	// out := insertCodeAndRun("fmt.Println(\"code\")")
-	// fmt.Printf("Output: %s\n", out)
+	prompt.SetOutputFile("prompt.log")
+	prompt.SetLogLevel(logrus.DebugLevel)
+
+	workspace, _ := os.Getwd()
+	logger.Infof("workspace %s", workspace)
+	codeDir := filepath.Join(workspace, ".prompt")
+	os.MkdirAll(codeDir, 0o755)
+	codePath := filepath.Join(codeDir, "main.go")
+
+	// 构建文件URI和工作区URI
+	fileURI := "file://" + codePath
+	workspaceURI := "file://" + workspace
+
+	// 创建带超时的上下文
+	fmt.Println("[DEBUG] 创建带超时的上下文")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // 增加超时时间
+	defer cancel()
+
+	fmt.Println("正在启动gopls并建立连接...")
+	// 创建LSP客户端
+	fmt.Printf("[DEBUG] 工作区路径: %s\n", workspaceURI)
+	fmt.Printf("[DEBUG] 文件路径: %s\n", fileURI)
+	client, err := lsp.NewLSPClient(ctx, workspaceURI, fileURI)
+	if err != nil {
+		fmt.Printf("创建LSP客户端失败: %v\n", err)
+		fmt.Println("\n调试信息:")
+		fmt.Println("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
+		fmt.Println("2. 请确保go版本 >= 1.16")
+		fmt.Println("3. 检查PATH环境变量是否包含gopls")
+		return
+	}
+	defer client.Close()
+
 	p := prompt.NewPrompt(
-		prompt.WithCompletions([]prompt.CompletionItem{
-			{Text: "fmt.Println", Desc: "func"},
-			{Text: "fmt.Println(\"code\")", Desc: "func"},
-			{Text: "fmt.Printf", Desc: "func"},
-			{Text: "time.Now", Desc: "func"},
-		}),
 		prompt.WithOutFunc(func(input string) string {
 			return insertCodeAndRun(input)
 		}),
+		prompt.WithCompletionFunc(func(input string) []prompt.CompletionItem {
+			return completionFunc(input)
+		}),
 	)
-	err := tui.NewTerminal(p).Run()
+	err = tui.NewTerminal(p).Run()
 	if err != nil {
 		fmt.Printf("go prompt err %v", err)
 	}
+}
+
+func completionFunc(input string) []prompt.CompletionItem {
+	return nil
 }
 
 // processCode finds unused variables in the main function of the provided Go code

@@ -219,3 +219,9 @@ func WithOutFunc(f OutFunc) Option {
 		p.outFunc = f
 	}
 }
+
+func WithCompletionFunc(f CompletionFunc) Option {
+	return func(p *Prompt) {
+		p.completionFunc = f
+	}
+}

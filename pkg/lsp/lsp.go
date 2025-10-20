@@ -1,4 +1,4 @@
-package main
+package lsp
 
 import (
 	"bufio"
@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/wxnacy/code-prompt/pkg/lsp"
 )
 
 // LSP协议相关结构体
@@ -84,7 +82,7 @@ type LSPClient struct {
 }
 
 // 创建新的LSP客户端
-func NewLSPClient(ctx context.Context, workspacePath, fileURI string) (*LSPClient, error) {
+func NewLSPClient(ctx context.Context, workspace, filePath string) (*LSPClient, error) {
 	fmt.Println("[DEBUG] 创建LSPClient...")
 
 	// 检查gopls是否存在
@@ -133,8 +131,8 @@ func NewLSPClient(ctx context.Context, workspacePath, fileURI string) (*LSPClien
 		cmd:              cmd,
 		requestID:        0,
 		initialized:      false,
-		workspacePath:    workspacePath,
-		fileURI:          fileURI,
+		workspacePath:    "file://" + workspace,
+		fileURI:          "file://" + filePath,
 		notificationChan: make(chan *JSONRPCNotification, 10),
 	}
 
@@ -486,7 +484,7 @@ func (c *LSPClient) initialize(ctx context.Context) error {
 }
 
 // 打开文档并通知LSP服务器
-func (c *LSPClient) didOpen(ctx context.Context, filename, languageID string, version int, text string) error {
+func (c *LSPClient) DidOpen(ctx context.Context, filename, languageID string, version int, text string) error {
 	params := map[string]interface{}{
 		"textDocument": map[string]interface{}{
 			"uri":        filename,
@@ -500,7 +498,7 @@ func (c *LSPClient) didOpen(ctx context.Context, filename, languageID string, ve
 }
 
 // 获取代码补全
-func (c *LSPClient) getCompletions(ctx context.Context, line, character int) (*CompletionList, error) {
+func (c *LSPClient) GetCompletions(ctx context.Context, line, character int) (*CompletionList, error) {
 	params := CompletionParams{
 		TextDocumentPositionParams: TextDocumentPositionParams{
 			TextDocument: TextDocumentIdentifier{
@@ -657,7 +655,7 @@ func getCompletionItemKindText(kind int) string {
 }
 
 // 打印补全结果
-func printCompletions(completions *lsp.CompletionList) {
+func printCompletions(completions *CompletionList) {
 	if completions == nil || len(completions.Items) == 0 {
 		fmt.Println("没有找到补全项")
 		return
@@ -732,7 +730,7 @@ func main() {
 	// 创建LSP客户端
 	fmt.Printf("[DEBUG] 工作区路径: %s\n", workspaceURI)
 	fmt.Printf("[DEBUG] 文件路径: %s\n", fileURI)
-	client, err := lsp.NewLSPClient(ctx, tmpDir, tmpFile)
+	client, err := NewLSPClient(ctx, workspaceURI, fileURI)
 	if err != nil {
 		fmt.Printf("创建LSP客户端失败: %v\n", err)
 		fmt.Println("\n调试信息:")
