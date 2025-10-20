@@ -40,11 +40,12 @@ func NewCompletion(items []CompletionItem) *Completion {
 			item.Desc,
 		})
 	}
+	tableHeight := min(len(items)+1, 11)
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(true),
-		table.WithHeight(len(items)+1),
+		table.WithHeight(tableHeight),
 	)
 	s := table.DefaultStyles()
 	s.Header = s.Header.

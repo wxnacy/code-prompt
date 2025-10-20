@@ -8,12 +8,15 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wxnacy/code-prompt/pkg/log"
 )
+
+var logger = log.GetLogger()
 
 // LSP协议相关结构体
 type Position struct {
@@ -83,47 +86,47 @@ type LSPClient struct {
 
 // 创建新的LSP客户端
 func NewLSPClient(ctx context.Context, workspace, filePath string) (*LSPClient, error) {
-	fmt.Println("[DEBUG] 创建LSPClient...")
+	logger.Debugf("创建LSPClient...")
 
 	// 检查gopls是否存在
 	goplsPath, err := exec.LookPath("gopls")
 	if err != nil {
-		fmt.Printf("[DEBUG] 找不到gopls命令: %v\n", err)
+		logger.Debugf("找不到gopls命令: %v", err)
 		return nil, fmt.Errorf("找不到gopls命令，请确保已安装: %w", err)
 	}
-	fmt.Printf("[DEBUG] 找到gopls: %s\n", goplsPath)
+	logger.Debugf("找到gopls: %s", goplsPath)
 
 	// 启动gopls进程
-	fmt.Println("[DEBUG] 启动gopls进程...")
+	logger.Debugf("启动gopls进程...")
 	cmd := exec.Command(goplsPath, "serve")
 	cmd.Stderr = os.Stderr
 
 	// 创建双向管道连接到gopls进程
-	fmt.Println("[DEBUG] 创建stdin管道...")
+	logger.Debugf("创建stdin管道...")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		fmt.Printf("[DEBUG] 创建stdin管道失败: %v\n", err)
+		logger.Debugf("创建stdin管道失败: %v", err)
 		return nil, fmt.Errorf("创建stdin管道失败: %w", err)
 	}
 
-	fmt.Println("[DEBUG] 创建stdout管道...")
+	logger.Debugf("创建stdout管道...")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stdin.Close()
-		fmt.Printf("[DEBUG] 创建stdout管道失败: %v\n", err)
+		logger.Debugf("创建stdout管道失败: %v", err)
 		return nil, fmt.Errorf("创建stdout管道失败: %w", err)
 	}
 
 	// 启动gopls进程
-	fmt.Println("[DEBUG] 执行cmd.Start()...")
+	logger.Debugf("执行cmd.Start()...")
 	err = cmd.Start()
 	if err != nil {
 		stdin.Close()
 		stdout.Close()
-		fmt.Printf("[DEBUG] 启动gopls进程失败: %v\n", err)
+		logger.Debugf("启动gopls进程失败: %v", err)
 		return nil, fmt.Errorf("启动gopls进程失败: %w", err)
 	}
-	fmt.Printf("[DEBUG] gopls进程已启动，PID: %d\n", cmd.Process.Pid)
+	logger.Debugf("gopls进程已启动，PID: %d", cmd.Process.Pid)
 
 	client := &LSPClient{
 		stdin:            stdin,
@@ -149,28 +152,33 @@ func NewLSPClient(ctx context.Context, workspace, filePath string) (*LSPClient, 
 	return client, nil
 }
 
+func (c *LSPClient) GetFileURI() string {
+	return c.fileURI
+}
+
 // 发送LSP消息
 func (c *LSPClient) sendMessage(message []byte) error {
 	// 构建LSP协议头
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(message))
 
-	fmt.Printf("[DEBUG] 发送消息头: %v\n", header)
-	fmt.Printf("[DEBUG] 发送消息体前100字节: %s\n", string(message)[:min(100, len(message))])
+	logger.Debugf("发送消息头: %v", header)
+	// logger.Debugf("发送消息体前100字节: %s", string(message)[:min(100, len(message))])
+	logger.Debugf("发送消息体前100字节: %s", string(message))
 
 	// 发送头和消息体
 	fullMessage := append([]byte(header), message...)
 	bytesWritten, err := c.stdin.Write(fullMessage)
 	if err != nil {
-		fmt.Printf("[DEBUG] 写入失败: %v\n", err)
+		logger.Debugf("写入失败: %v", err)
 		return err
 	}
-	fmt.Printf("[DEBUG] 成功写入 %d 字节\n", bytesWritten)
+	logger.Debugf("成功写入 %d 字节", bytesWritten)
 	return nil
 }
 
 // 接收LSP消息
 func (c *LSPClient) receiveMessage() ([]byte, error) {
-	fmt.Println("[DEBUG] 开始接收消息...")
+	logger.Debugf("开始接收消息...")
 
 	// 使用带缓冲的reader来读取响应
 	reader := bufio.NewReader(c.stdout)
@@ -181,13 +189,13 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Printf("[DEBUG] 读取头部行失败: %v\n", err)
+			logger.Debugf("读取头部行失败: %v", err)
 			return nil, fmt.Errorf("读取响应头失败: %w", err)
 		}
 		// 去除换行符
 		line = strings.TrimRight(line, "\r\n")
 		headerLines = append(headerLines, line)
-		fmt.Printf("[DEBUG] 读取到头部行: '%s'\n", line)
+		logger.Debugf("读取到头部行: '%s'", line)
 
 		if line == "" {
 			// 头结束，开始读取消息体
@@ -199,23 +207,23 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 			lengthStr = strings.TrimSpace(lengthStr)
 			length, err := strconv.Atoi(lengthStr)
 			if err != nil {
-				fmt.Printf("[DEBUG] 解析Content-Length失败: %v\n", err)
+				logger.Debugf("解析Content-Length失败: %v", err)
 				return nil, fmt.Errorf("解析Content-Length失败: %w", err)
 			}
 			contentLength = length
-			fmt.Printf("[DEBUG] 解析到Content-Length: %d\n", contentLength)
+			logger.Debugf("解析到Content-Length: %d", contentLength)
 		}
 	}
 
-	fmt.Printf("[DEBUG] 所有头部行: %v\n", headerLines)
+	logger.Debugf("所有头部行: %v", headerLines)
 
 	if contentLength == 0 {
-		fmt.Println("[DEBUG] 警告: Content-Length为0")
+		logger.Debugf("警告: Content-Length为0")
 		return nil, fmt.Errorf("接收到的消息没有Content-Length头")
 	}
 
 	// 直接读取消息体，使用更大的缓冲区和更长的超时
-	fmt.Printf("[DEBUG] 开始读取消息体，大小: %d 字节\n", contentLength)
+	logger.Debugf("开始读取消息体，大小: %d 字节", contentLength)
 	message := make([]byte, contentLength)
 	totalRead := 0
 
@@ -226,7 +234,7 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 	for totalRead < contentLength {
 		// 检查是否超时
 		if time.Now().After(timeout) {
-			fmt.Printf("[DEBUG] 读取消息体超时，已读取 %d/%d 字节\n", totalRead, contentLength)
+			logger.Debugf("读取消息体超时，已读取 %d/%d 字节", totalRead, contentLength)
 			return nil, fmt.Errorf("读取消息体超时")
 		}
 
@@ -240,11 +248,11 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 		if err != nil {
 			if err == io.EOF {
 				// 到达文件末尾，但我们还没读完所有数据
-				fmt.Printf("[DEBUG] 提前到达EOF，已读取 %d/%d 字节\n", totalRead+bytesRead, contentLength)
+				logger.Debugf("提前到达EOF，已读取 %d/%d 字节", totalRead+bytesRead, contentLength)
 				totalRead += bytesRead
 				break
 			}
-			fmt.Printf("[DEBUG] 读取消息体失败，已读取 %d/%d 字节: %v\n", totalRead+bytesRead, contentLength, err)
+			logger.Debugf("读取消息体失败，已读取 %d/%d 字节: %v", totalRead+bytesRead, contentLength, err)
 			return nil, fmt.Errorf("读取消息体失败: %w", err)
 		}
 
@@ -255,19 +263,19 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 		}
 
 		totalRead += bytesRead
-		fmt.Printf("[DEBUG] 已读取 %d/%d 字节\n", totalRead, contentLength)
+		logger.Debugf("已读取 %d/%d 字节", totalRead, contentLength)
 	}
 
 	// 检查是否读取了所有数据
 	if totalRead < contentLength {
-		fmt.Printf("[DEBUG] 警告：只读取了 %d/%d 字节\n", totalRead, contentLength)
+		logger.Debugf("警告：只读取了 %d/%d 字节", totalRead, contentLength)
 		// 返回已读取的数据，但这可能会导致后续解析错误
 		message = message[:totalRead]
 	}
 
-	fmt.Printf("[DEBUG] 成功读取消息体，共 %d 字节\n", len(message))
+	logger.Debugf("成功读取消息体，共 %d 字节", len(message))
 	if len(message) > 0 {
-		fmt.Printf("[DEBUG] 消息体前100字节: %s\n", string(message)[:min(100, len(message))])
+		logger.Debugf("消息体前100字节: %s", string(message)[:min(100, len(message))])
 	}
 
 	return message, nil
@@ -276,7 +284,7 @@ func (c *LSPClient) receiveMessage() ([]byte, error) {
 // 处理通知消息
 func (c *LSPClient) handleNotifications() {
 	defer close(c.notificationChan)
-	fmt.Println("[DEBUG] 通知处理协程已启动")
+	logger.Debugf("通知处理协程已启动")
 
 	// 创建单独的reader用于通知处理，避免与主请求流程冲突
 	notificationReader := bufio.NewReader(c.stdout)
@@ -290,10 +298,10 @@ func (c *LSPClient) handleNotifications() {
 			line, err := notificationReader.ReadString('\n')
 			if err != nil {
 				if err == io.EOF {
-					fmt.Println("[DEBUG] EOF到达，通知处理结束")
+					logger.Debugf("EOF到达，通知处理结束")
 					return
 				}
-				fmt.Printf("[DEBUG] 读取通知头部失败: %v\n", err)
+				logger.Debugf("读取通知头部失败: %v", err)
 				// 继续尝试，不返回
 				break
 			}
@@ -323,7 +331,7 @@ func (c *LSPClient) handleNotifications() {
 		// 读取消息体
 		message := make([]byte, contentLength)
 		if _, err := io.ReadFull(notificationReader, message); err != nil {
-			fmt.Printf("[DEBUG] 读取通知消息体失败: %v\n", err)
+			logger.Debugf("读取通知消息体失败: %v", err)
 			continue
 		}
 
@@ -344,13 +352,13 @@ func (c *LSPClient) handleNotifications() {
 				case "window/showMessage":
 					if paramsMap, ok := params.(map[string]interface{}); ok {
 						if message, ok := paramsMap["message"].(string); ok {
-							fmt.Printf("[gopls消息] %s\n", message)
+							logger.Infof("[gopls消息] %s", message)
 						}
 					}
 				case "window/logMessage":
 					if paramsMap, ok := params.(map[string]interface{}); ok {
 						if message, ok := paramsMap["message"].(string); ok {
-							fmt.Printf("[gopls日志] %s\n", message)
+							logger.Infof("[gopls日志] %s", message)
 						}
 					}
 				}
@@ -411,7 +419,7 @@ func (c *LSPClient) sendRequest(ctx context.Context, method string, params inter
 			return resp.Result, nil
 		} else {
 			// 如果不是我们请求的响应，可能是一个通知
-			fmt.Printf("[DEBUG] 收到未匹配的响应 (ID: %d, 期望: %d)，重试...\n", resp.ID, reqID)
+			logger.Debugf("收到未匹配的响应 (ID: %d, 期望: %d)，重试...", resp.ID, reqID)
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
@@ -440,7 +448,7 @@ func (c *LSPClient) sendNotification(method string, params interface{}) error {
 
 // 初始化LSP连接
 func (c *LSPClient) initialize(ctx context.Context) error {
-	fmt.Println("[DEBUG] 开始初始化LSP连接...")
+	logger.Debugf("开始初始化LSP连接...")
 
 	// 构建initialize请求参数
 	params := map[string]interface{}{
@@ -456,30 +464,30 @@ func (c *LSPClient) initialize(ctx context.Context) error {
 	}
 
 	// 发送initialize请求
-	fmt.Println("[DEBUG] 发送initialize请求...")
+	logger.Debugf("发送initialize请求...")
 	result, err := c.sendRequest(ctx, "initialize", params)
 	if err != nil {
-		fmt.Printf("[DEBUG] 发送initialize请求失败: %v\n", err)
+		logger.Debugf("发送initialize请求失败: %v", err)
 		return err
 	}
-	fmt.Println("[DEBUG] 收到initialize响应")
+	logger.Debugf("收到initialize响应")
 
 	// 打印initialize响应内容（简略）
 	if result != nil {
 		resultBytes, _ := json.Marshal(result)
-		fmt.Printf("[DEBUG] Initialize响应: %s\n", string(resultBytes)[:100]+"...")
+		logger.Debugf("Initialize响应: %s", string(resultBytes)[:100]+"...")
 	}
 
 	// 发送initialized通知
-	fmt.Println("[DEBUG] 发送initialized通知...")
+	logger.Debugf("发送initialized通知...")
 	err = c.sendNotification("initialized", map[string]interface{}{})
 	if err != nil {
-		fmt.Printf("[DEBUG] 发送initialized通知失败: %v\n", err)
+		logger.Debugf("发送initialized通知失败: %v", err)
 		return err
 	}
 
 	c.initialized = true
-	fmt.Println("[DEBUG] LSP连接初始化完成")
+	logger.Debugf("LSP连接初始化完成")
 	return nil
 }
 
@@ -499,6 +507,7 @@ func (c *LSPClient) DidOpen(ctx context.Context, filename, languageID string, ve
 
 // 获取代码补全
 func (c *LSPClient) GetCompletions(ctx context.Context, line, character int) (*CompletionList, error) {
+	logger.Debugf("===== 光标位置 行: %d 列: %d", line, character)
 	params := CompletionParams{
 		TextDocumentPositionParams: TextDocumentPositionParams{
 			TextDocument: TextDocumentIdentifier{
@@ -528,6 +537,7 @@ func (c *LSPClient) GetCompletions(ctx context.Context, line, character int) (*C
 	if err != nil {
 		return nil, fmt.Errorf("解析补全结果失败: %w", err)
 	}
+	logger.Debugf("CompletionList length %d", len(completionList.Items))
 
 	return &completionList, nil
 }
@@ -654,130 +664,10 @@ func getCompletionItemKindText(kind int) string {
 	}
 }
 
-// 打印补全结果
-func printCompletions(completions *CompletionList) {
-	if completions == nil || len(completions.Items) == 0 {
-		fmt.Println("没有找到补全项")
-		return
-	}
-
-	fmt.Printf("找到 %d 个补全项:\n\n", len(completions.Items))
-	fmt.Println("\033[1m补全项\033[0m | \033[1m类型\033[0m | \033[1m详情\033[0m")
-	fmt.Println("----------------------------------------")
-
-	for _, item := range completions.Items {
-		fmt.Printf("%#v\n", item)
-		kindText := getCompletionItemKindText(item.Kind)
-		detail := ""
-		if item.Detail != nil {
-			detail = *item.Detail
-		}
-		fmt.Printf("%-20s | %-10s | %s\n", item.Label, kindText, detail)
-	}
-}
-
 // 辅助函数
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
-}
-
-func main() {
-	fmt.Println("Go LSP代码补全示例")
-	fmt.Println("=================")
-	fmt.Println("程序启动中...")
-
-	// 示例代码，包含fmt包导入和fmt.调用点 - 使用更完整的代码示例
-	code := `package main
-
-func getName( s string) string {
-	return s
-}
-
-func main() {
-	// 在这里我们使用fmt包，触发补全
-	log.
-}`
-
-	// 创建临时文件
-	tmpDir, err := os.MkdirTemp("", "code-prompt*")
-	if err != nil {
-		fmt.Printf("创建临时目录失败: %v\n", err)
-		return
-	}
-	defer os.RemoveAll(tmpDir)
-
-	tmpFile := filepath.Join(tmpDir, "main.go")
-	err = os.WriteFile(tmpFile, []byte(code), 0o644)
-	if err != nil {
-		fmt.Printf("写入临时文件失败: %v\n", err)
-		return
-	}
-
-	// 构建文件URI和工作区URI
-	fileURI := "file://" + tmpFile
-	workspaceURI := "file://" + tmpDir
-
-	// 创建带超时的上下文
-	fmt.Println("[DEBUG] 创建带超时的上下文")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // 增加超时时间
-	defer cancel()
-
-	fmt.Println("正在启动gopls并建立连接...")
-
-	// 创建LSP客户端
-	fmt.Printf("[DEBUG] 工作区路径: %s\n", workspaceURI)
-	fmt.Printf("[DEBUG] 文件路径: %s\n", fileURI)
-	client, err := NewLSPClient(ctx, workspaceURI, fileURI)
-	if err != nil {
-		fmt.Printf("创建LSP客户端失败: %v\n", err)
-		fmt.Println("\n调试信息:")
-		fmt.Println("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
-		fmt.Println("2. 请确保go版本 >= 1.16")
-		fmt.Println("3. 检查PATH环境变量是否包含gopls")
-		return
-	}
-	defer client.Close()
-
-	fmt.Println("连接建立成功，正在打开文档...")
-
-	// 通知服务器打开文档
-	err = client.DidOpen(ctx, fileURI, "go", 1, code)
-	if err != nil {
-		fmt.Printf("通知文档打开失败: %v\n", err)
-		return
-	}
-
-	// 等待gopls加载包（给gopls一些时间处理文档）
-	fmt.Println("正在等待gopls加载包...")
-	time.Sleep(2 * time.Second) // 给gopls一些时间加载包
-
-	// 查找光标位置
-	line, character := findCursorPosition(code)
-	fmt.Printf("光标位置: 行 %d, 列 %d\n", line, character)
-	fmt.Println("正在请求代码补全...")
-
-	// 请求代码补全
-	completions, err := client.GetCompletions(ctx, line, character)
-	if err != nil {
-		fmt.Printf("获取代码补全失败: %v\n", err)
-		fmt.Println("\n可能的原因:")
-		fmt.Println("1. gopls版本不兼容")
-		fmt.Println("2. 临时文件内容有问题")
-		fmt.Println("3. LSP协议实现有差异")
-		fmt.Println("4. gopls可能还在加载包，请尝试增加等待时间")
-		return
-	}
-
-	// 打印补全结果
-	printCompletions(completions)
-
-	fmt.Println("\n代码补全演示完成！")
-	fmt.Println("\n实现说明:")
-	fmt.Println("1. 使用Go标准库实现了完整的LSP客户端")
-	fmt.Println("2. 正确处理了LSP协议的消息格式和头部")
-	fmt.Println("3. 能够启动gopls进程并与之交互")
-	fmt.Println("4. 支持代码补全功能")
 }

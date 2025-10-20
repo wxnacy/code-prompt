@@ -18,15 +18,19 @@ import (
 
 	"github.com/sirupsen/logrus"
 	prompt "github.com/wxnacy/code-prompt"
+	"github.com/wxnacy/code-prompt/pkg/log"
 	"github.com/wxnacy/code-prompt/pkg/lsp"
 	"github.com/wxnacy/code-prompt/pkg/tui"
 )
 
-var logger = prompt.GetLogger()
+var (
+	logger      = log.GetLogger()
+	fileVersion = 1
+)
 
 func main() {
-	prompt.SetOutputFile("prompt.log")
-	prompt.SetLogLevel(logrus.DebugLevel)
+	log.SetOutputFile("prompt.log")
+	log.SetLogLevel(logrus.DebugLevel)
 
 	workspace, _ := os.Getwd()
 	logger.Infof("workspace %s", workspace)
@@ -39,41 +43,116 @@ func main() {
 	workspaceURI := "file://" + workspace
 
 	// 创建带超时的上下文
-	fmt.Println("[DEBUG] 创建带超时的上下文")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // 增加超时时间
+	logger.Debugf("创建带超时的上下文")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // 增加超时时间
 	defer cancel()
 
-	fmt.Println("正在启动gopls并建立连接...")
+	logger.Infof("正在启动gopls并建立连接...")
 	// 创建LSP客户端
-	fmt.Printf("[DEBUG] 工作区路径: %s\n", workspaceURI)
-	fmt.Printf("[DEBUG] 文件路径: %s\n", fileURI)
-	client, err := lsp.NewLSPClient(ctx, workspaceURI, fileURI)
+	logger.Debugf("工作区路径: %s", workspaceURI)
+	logger.Debugf("文件路径: %s", fileURI)
+	client, err := lsp.NewLSPClient(ctx, workspace, codePath)
 	if err != nil {
-		fmt.Printf("创建LSP客户端失败: %v\n", err)
-		fmt.Println("\n调试信息:")
-		fmt.Println("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
-		fmt.Println("2. 请确保go版本 >= 1.16")
-		fmt.Println("3. 检查PATH环境变量是否包含gopls")
+		logger.Errorf("创建LSP客户端失败: %v", err)
+		logger.Infof("\n调试信息:")
+		logger.Infof("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
+		logger.Infof("2. 请确保go版本 >= 1.16")
+		logger.Infof("3. 检查PATH环境变量是否包含gopls")
 		return
 	}
 	defer client.Close()
+
+	// Notify server that we have a file open
+	fileVersion++
+	err = client.DidOpen(ctx, fileURI, "go", fileVersion, "")
+	if err != nil {
+		logger.Errorf("Initial DidOpen failed: %v", err)
+	}
+	logger.Infof("正在等待gopls加载包...")
+	time.Sleep(2 * time.Second) // 给gopls一些时间加载包
 
 	p := prompt.NewPrompt(
 		prompt.WithOutFunc(func(input string) string {
 			return insertCodeAndRun(input)
 		}),
 		prompt.WithCompletionFunc(func(input string) []prompt.CompletionItem {
-			return completionFunc(input)
+			return completionFunc(input, client, ctx)
 		}),
 	)
 	err = tui.NewTerminal(p).Run()
 	if err != nil {
-		fmt.Printf("go prompt err %v", err)
+		logger.Errorf("go prompt err %v", err)
 	}
 }
 
-func completionFunc(input string) []prompt.CompletionItem {
-	return nil
+func completionFunc(input string, client *lsp.LSPClient, ctx context.Context) []prompt.CompletionItem {
+	fileVersion++
+	// 根据输入，使用 client 获取补全结果，代码临时存放在 client.fileURI 中
+	tpl := `package main
+
+func main() {
+	// 在这里我们使用fmt包，触发补全
+	%s
+}`
+	// TODO: 我希望通过插入 input_suffix 来获取输入位置结尾来获取补全索引，但是计算的有点问题，帮我改下
+	input_suffix := "// :INPUT"
+	code := fmt.Sprintf(tpl, input+input_suffix)
+
+	// 从 file URI 中获取文件路径
+	filePath := strings.ReplaceAll(client.GetFileURI(), "file://", "")
+	logger.Infof("filePath %s", filePath)
+
+	err := os.WriteFile(filePath, []byte(code), 0o644)
+	if err != nil {
+		logger.Errorf("写入临时文件失败: %v", err)
+		return nil
+	}
+
+	err = client.DidOpen(ctx, client.GetFileURI(), "go", fileVersion, code)
+	if err != nil {
+		logger.Errorf("textDocument/didOpen failed: %v", err)
+	}
+
+	// 计算光标位置
+	suffixPos := strings.Index(code, input_suffix)
+	if suffixPos == -1 {
+		logger.Errorf("Could not find input_suffix in code")
+		return nil
+	}
+
+	// Get the code content before the suffix
+	codeBeforeSuffix := code[:suffixPos]
+
+	// Count lines and character offset
+	linesBeforeSuffix := strings.Split(codeBeforeSuffix, "\n")
+	row := len(linesBeforeSuffix) - 1
+	col := len(linesBeforeSuffix[len(linesBeforeSuffix)-1])
+
+	// 获取补全
+	completions, err := client.GetCompletions(ctx, row, col)
+	if err != nil {
+		logger.Errorf("获取代码补全失败: %v", err)
+		return nil
+	}
+
+	if completions == nil {
+		return nil
+	}
+
+	// 转换补全项
+	var items []prompt.CompletionItem
+	for _, comp := range completions.Items {
+		var desc string
+		if comp.Detail != nil {
+			desc = *comp.Detail
+		}
+		items = append(items, prompt.CompletionItem{
+			Text: comp.Label,
+			Desc: desc,
+		})
+	}
+
+	return items
 }
 
 // processCode finds unused variables in the main function of the provided Go code
@@ -169,9 +248,6 @@ func insertCodeAndRun(input string) string {
 	// defer os.Chdir(curDir)
 	tpl := `package main
 
-func getName( s string) string {
-	return s
-}
 
 func main() {
 	// 在这里我们使用fmt包，触发补全

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	"github.com/wxnacy/code-prompt/pkg/log"
 	"github.com/wxnacy/code-prompt/pkg/lsp"
 )
 
@@ -668,7 +670,7 @@ func printCompletions(completions *lsp.CompletionList) {
 	fmt.Println("----------------------------------------")
 
 	for _, item := range completions.Items {
-		fmt.Printf("%#v\n", item)
+		// fmt.Printf("%#v\n", item)
 		kindText := getCompletionItemKindText(item.Kind)
 		detail := ""
 		if item.Detail != nil {
@@ -687,16 +689,14 @@ func min(a, b int) int {
 }
 
 func main() {
+	log.SetOutputFile("prompt.log")
+	log.SetLogLevel(logrus.DebugLevel)
 	fmt.Println("Go LSP代码补全示例")
 	fmt.Println("=================")
 	fmt.Println("程序启动中...")
 
 	// 示例代码，包含fmt包导入和fmt.调用点 - 使用更完整的代码示例
 	code := `package main
-
-func getName( s string) string {
-	return s
-}
 
 func main() {
 	// 在这里我们使用fmt包，触发补全
