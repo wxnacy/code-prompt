@@ -69,20 +69,23 @@ func main() {
 		logger.Errorf("Initial DidOpen failed: %v", err)
 	}
 	logger.Infof("正在等待gopls加载包...")
-	time.Sleep(2 * time.Second) // 给gopls一些时间加载包
+	// time.Sleep(2 * time.Second) // 给gopls一些时间加载包
 
 	p := prompt.NewPrompt(
-		prompt.WithOutFunc(func(input string) string {
-			return insertCodeAndRun(input)
-		}),
+		prompt.WithOutFunc(insertCodeAndRun),
 		prompt.WithCompletionFunc(func(input string, cursor int) []prompt.CompletionItem {
 			return completionFunc(input, cursor, client, ctx)
 		}),
+		prompt.WithCompletionSelectFunc(completionSelectFunc),
 	)
 	err = tui.NewTerminal(p).Run()
 	if err != nil {
 		logger.Errorf("go prompt err %v", err)
 	}
+}
+
+func completionSelectFunc(p *prompt.Prompt, input string, cursor int, selected prompt.CompletionItem) {
+	// TODO: prompt 中 DefaultCompletionSelectFunc 默认的选择方法比较简单粗暴,会直接把输入框全部替换，所以我提供了自定义改方法的功能，实现现代 IDE 的补全模式，帮我实现这个方法
 }
 
 func completionFunc(input string, cursor int, client *lsp.LSPClient, ctx context.Context) []prompt.CompletionItem {

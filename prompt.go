@@ -127,7 +127,7 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selected := m.completion.GetSelected()
 				// 触发选择补全的方法
 				if m.completionSelectFunc != nil {
-					m.completionSelectFunc(m, m.Value(), m.input.Model.Position(), selected)
+					m.completionSelectFunc(m, m.Value(), m.Cursor(), selected)
 				}
 			}
 
@@ -138,7 +138,7 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			value := m.Value()
 			// 使用补全方法获取自全列表
 			if m.completionFunc != nil {
-				newCompletionItems := m.completionFunc(value, m.input.Model.Position())
+				newCompletionItems := m.completionFunc(value, m.Cursor())
 				if newCompletionItems != nil && len(newCompletionItems) > 0 {
 					m.completion = NewCompletion(newCompletionItems)
 				} else {
@@ -183,8 +183,8 @@ func (m *Prompt) DefaultCompletionFunc(input string, cursor int) []CompletionIte
 }
 
 func DefaultCompletionSelectFunc(p *Prompt, input string, cursor int, selected CompletionItem) {
-	p.input.Model.SetValue(selected.Text)
-	p.input.Model.SetCursor(len(selected.Text))
+	p.SetValue(selected.Text)
+	p.SetCursor(len(selected.Text))
 }
 
 func (m Prompt) GetCompletionView() string {
@@ -204,6 +204,18 @@ func (m Prompt) NewInput() *Input {
 
 func (m Prompt) Value() string {
 	return m.input.Model.Value()
+}
+
+func (m Prompt) Cursor() int {
+	return m.input.Model.Position()
+}
+
+func (m Prompt) SetValue(s string) {
+	m.input.Model.SetValue(s)
+}
+
+func (m Prompt) SetCursor(pos int) {
+	m.input.Model.SetCursor(pos)
 }
 
 // Input end   ==================
