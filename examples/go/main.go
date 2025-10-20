@@ -85,7 +85,26 @@ func main() {
 }
 
 func completionSelectFunc(p *prompt.Prompt, input string, cursor int, selected prompt.CompletionItem) {
-	// TODO: prompt 中 DefaultCompletionSelectFunc 默认的选择方法比较简单粗暴,会直接把输入框全部替换，所以我提供了自定义改方法的功能，实现现代 IDE 的补全模式，帮我实现这个方法
+	// text before cursor
+	textBeforeCursor := input[:cursor]
+
+	// find last word separator
+	wordSeparators := " .()[]{}<>"
+	startOfWord := strings.LastIndexAny(textBeforeCursor, wordSeparators)
+	if startOfWord == -1 {
+		startOfWord = 0 // beginning of the string
+	} else {
+		startOfWord++ // after the separator
+	}
+
+	// text after cursor
+	textAfterCursor := input[cursor:]
+
+	newInput := input[:startOfWord] + selected.Text + textAfterCursor
+	newCursor := startOfWord + len(selected.Text)
+
+	p.SetValue(newInput)
+	p.SetCursor(newCursor)
 }
 
 func completionFunc(input string, cursor int, client *lsp.LSPClient, ctx context.Context) []prompt.CompletionItem {
