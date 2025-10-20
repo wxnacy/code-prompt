@@ -45,14 +45,12 @@ type Prompt struct {
 	historys []*History
 
 	// completion
-	completionItems      []CompletionItem
-	completionFunc       CompletionFunc
-	completion           *Completion
-	completionToggleText string // 触发补全的内容
+	completionItems []CompletionItem
+	completionFunc  CompletionFunc
+	completion      *Completion
 
 	// input
 	input *Input
-	// inputText string
 
 	// out
 	outFunc OutFunc
@@ -115,36 +113,31 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, Empty
 		}
 		// 组件键位监听 begin
-		cmd = m.UpdateInput(msg)
-		cmds = append(cmds, cmd)
+		isCompletionKey := m.completion != nil && key.Matches(msg, m.completion.KeyMap.ListenKeys()...)
 
-		value := m.input.Model.Value()
-		toggleText := m.completionToggleText
-		if toggleText == "" {
-			toggleText = value
-		}
-		newCompletionItems := m.filterCompletionItems(toggleText)
-		if newCompletionItems != nil && len(newCompletionItems) > 0 {
-			m.completion = NewCompletion(newCompletionItems)
-			m.completionToggleText = toggleText
-		} else {
-			m.completion = nil
-			m.completionToggleText = ""
-		}
-
-		// 补全键位监听
-		if m.completion != nil && key.Matches(msg, m.completion.KeyMap.ListenKeys()...) {
+		if isCompletionKey {
 			completion, cmd := m.completion.Update(msg)
 			cmds = append(cmds, cmd)
 			m.completion = completion.(*Completion)
-			// 检测到补全选中变动，为 input 赋值
+
 			if key.Matches(msg, m.completion.KeyMap.NextCompletion, m.completion.KeyMap.PrevCompletion) {
 				selected := m.completion.GetSelected()
 				m.input.Model.SetValue(selected.Text)
 				m.input.Model.SetCursor(len(selected.Text))
 			}
-		}
 
+		} else {
+			cmd = m.UpdateInput(msg)
+			cmds = append(cmds, cmd)
+
+			value := m.input.Model.Value()
+			newCompletionItems := m.filterCompletionItems(value)
+			if newCompletionItems != nil && len(newCompletionItems) > 0 {
+				m.completion = NewCompletion(newCompletionItems)
+			} else {
+				m.completion = nil
+			}
+		}
 		// 组件键位监听 end
 		return m, tea.Batch(cmds...)
 	}
