@@ -14,6 +14,10 @@ func DefaultPromptKeyMap() PromptKeyMap {
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "确认"),
 		),
+		ClearCompletion: key.NewBinding(
+			key.WithKeys("ctrl+x"),
+			key.WithHelp("ctrl+x", "取消补全建议"),
+		),
 		NextCompletion: defaultCompletionKeyMap.NextCompletion,
 		PrevCompletion: defaultCompletionKeyMap.PrevCompletion,
 	}
@@ -21,8 +25,9 @@ func DefaultPromptKeyMap() PromptKeyMap {
 
 type PromptKeyMap struct {
 	// FullHelp
-	NextCompletion key.Binding // ShortHelp ListenKeys
-	PrevCompletion key.Binding // ShortHelp ListenKeys
+	NextCompletion  key.Binding // ShortHelp ListenKeys
+	PrevCompletion  key.Binding // ShortHelp ListenKeys
+	ClearCompletion key.Binding // ShortHelp ListenKeys
 
 	// FullHelp
 	Enter key.Binding
@@ -30,12 +35,12 @@ type PromptKeyMap struct {
 }
 
 func (km PromptKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{km.NextCompletion, km.PrevCompletion}
+	return []key.Binding{km.NextCompletion, km.PrevCompletion, km.ClearCompletion}
 }
 
 func (km PromptKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{km.NextCompletion, km.PrevCompletion},
+		{km.NextCompletion, km.PrevCompletion, km.ClearCompletion},
 		{km.Exit, km.Enter},
 	}
 }
@@ -44,5 +49,6 @@ func (km PromptKeyMap) ListenKeys() []key.Binding {
 	return []key.Binding{
 		km.NextCompletion,
 		km.PrevCompletion,
+		km.ClearCompletion,
 	}
 }

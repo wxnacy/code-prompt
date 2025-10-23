@@ -104,15 +104,28 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 退出程序
 		case key.Matches(msg, m.KeyMap.Exit):
 			return m, tea.Quit
+		case key.Matches(msg, m.KeyMap.ClearCompletion):
+			m.completion = nil
+			return m, Empty
 		case key.Matches(msg, m.KeyMap.Enter):
 			value := m.Value()
-			out := value
-			if m.outFunc != nil {
-				out = m.outFunc(value)
+			if m.completion != nil {
+				// 如果有补全建议，使用选中的，或者开始的第一个
+				selected := m.completion.GetSelected()
+				// 触发选择补全的方法
+				if m.completionSelectFunc != nil {
+					m.completionSelectFunc(m, value, m.Cursor(), selected)
+				}
+				m.completion = nil
+			} else {
+				// 进行输出
+				out := value
+				if m.outFunc != nil {
+					out = m.outFunc(value)
+				}
+				m.AppendHistory(out)
+				m.input = m.NewInput()
 			}
-			m.AppendHistory(out)
-			m.input = m.NewInput()
-			m.completion = nil
 			return m, Empty
 		}
 		// 组件键位监听 begin
