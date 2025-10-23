@@ -6,8 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/sourcegraph/go-lsp v0.0.0-20210325060343-15d3a5aac592
-	github.com/sourcegraph/jsonrpc2 v0.1.0
+	github.com/sirupsen/logrus v1.9.3
 )
 
 require (

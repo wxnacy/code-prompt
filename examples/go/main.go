@@ -25,7 +25,7 @@ import (
 
 var (
 	logger      = log.GetLogger()
-	fileVersion = 1
+	fileVersion = 0
 )
 
 func main() {
@@ -40,24 +40,21 @@ func main() {
 
 	// 构建文件URI和工作区URI
 	fileURI := "file://" + codePath
-	workspaceURI := "file://" + workspace
+	// workspaceURI := "file://" + workspace // This was unused, keeping it commented
 
 	// 创建带超时的上下文
 	logger.Debugf("创建带超时的上下文")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // 增加超时时间
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Generous timeout
 	defer cancel()
 
 	logger.Infof("正在启动gopls并建立连接...")
 	// 创建LSP客户端
-	logger.Debugf("工作区路径: %s", workspaceURI)
-	logger.Debugf("文件路径: %s", fileURI)
 	client, err := lsp.NewLSPClient(ctx, workspace, codePath)
 	if err != nil {
 		logger.Errorf("创建LSP客户端失败: %v", err)
-		logger.Infof("\n调试信息:")
-		logger.Infof("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
-		logger.Infof("2. 请确保go版本 >= 1.16")
-		logger.Infof("3. 检查PATH环境变量是否包含gopls")
+		fmt.Println("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
+		fmt.Println("2. 请确保go版本 >= 1.16")
+		fmt.Println("3. 检查PATH环境变量是否包含gopls")
 		return
 	}
 	defer client.Close()
@@ -68,8 +65,13 @@ func main() {
 	if err != nil {
 		logger.Errorf("Initial DidOpen failed: %v", err)
 	}
-	logger.Infof("正在等待gopls加载包...")
-	// time.Sleep(2 * time.Second) // 给gopls一些时间加载包
+
+	fmt.Println("正在等待gopls加载项目包，请稍候...")
+	if err := client.WaitForReady(ctx); err != nil {
+		logger.Errorf("gopls未能成功加载: %v", err)
+		return
+	}
+	fmt.Println("gopls已就绪，您可以开始输入了！")
 
 	p := prompt.NewPrompt(
 		prompt.WithOutFunc(insertCodeAndRun),
