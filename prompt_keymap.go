@@ -7,8 +7,8 @@ import (
 func DefaultPromptKeyMap() PromptKeyMap {
 	return PromptKeyMap{
 		Exit: key.NewBinding(
-			key.WithKeys("ctrl+c"),
-			key.WithHelp("ctrl+c", "退出"),
+			key.WithKeys("ctrl+d"),
+			key.WithHelp("ctrl+d", "退出"),
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),

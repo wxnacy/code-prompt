@@ -103,7 +103,10 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		// 退出程序
 		case key.Matches(msg, m.KeyMap.Exit):
-			return m, tea.Quit
+			if m.Value() == "" {
+				// 没有输入数据的时候才退出，否则执行向后删除功能
+				return m, tea.Quit
+			}
 		case key.Matches(msg, m.KeyMap.ClearCompletion):
 			m.completion = nil
 			return m, Empty
