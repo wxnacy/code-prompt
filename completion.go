@@ -14,6 +14,7 @@ import (
 type CompletionItem struct {
 	Text string
 	Desc string
+	Ext  interface{}
 }
 
 func NewCompletion(items []CompletionItem) *Completion {

@@ -63,7 +63,7 @@ func main() {
 		prompt.WithCompletionFunc(func(input string, cursor int) []prompt.CompletionItem {
 			return completionFunc(input, cursor, client, ctx)
 		}),
-		prompt.WithCompletionSelectFunc(completionSelectFunc),
+		prompt.WithCompletionSelectFunc(prompt.DefaultCompletionLSPSelectFunc),
 	)
 	err = tui.NewTerminal(p).Run()
 	if err != nil {
@@ -98,29 +98,6 @@ func prepareLSP(workspace, codePath string) (context.Context, context.CancelFunc
 	fmt.Println("gopls已就绪，您可以开始输入了！")
 
 	return ctx, cancel, client, nil
-}
-
-func completionSelectFunc(p *prompt.Prompt, input string, cursor int, selected prompt.CompletionItem) {
-	// text before cursor
-	textBeforeCursor := input[:cursor]
-
-	// find last word separator
-	wordSeparators := " .()[]{}<>"
-	startOfWord := strings.LastIndexAny(textBeforeCursor, wordSeparators)
-	if startOfWord == -1 {
-		startOfWord = 0 // beginning of the string
-	} else {
-		startOfWord++ // after the separator
-	}
-
-	// text after cursor
-	textAfterCursor := input[cursor:]
-
-	newInput := input[:startOfWord] + selected.Text + textAfterCursor
-	newCursor := startOfWord + len(selected.Text)
-
-	p.SetValue(newInput)
-	p.SetCursor(newCursor)
 }
 
 // 补全方法
@@ -217,6 +194,7 @@ func main() {
 		items = append(items, prompt.CompletionItem{
 			Text: comp.Label,
 			Desc: desc,
+			Ext:  comp,
 		})
 	}
 
