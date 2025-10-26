@@ -8,7 +8,9 @@ import (
 )
 
 func NewOut(text string) *Out {
-	vp := viewport.New(100, 1)
+	h := lipgloss.Height(text)
+	w := lipgloss.Width(text) + 1
+	vp := viewport.New(w, h)
 	vp.SetContent(text)
 	m := &Out{
 		Model:  vp,
