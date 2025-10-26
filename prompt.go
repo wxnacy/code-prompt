@@ -48,7 +48,8 @@ type Prompt struct {
 	prompt string
 
 	// history
-	historys []*History
+	historys     []*History
+	historyIndex int // 历史记录索引
 
 	// completion
 	completionItems      []CompletionItem
@@ -110,6 +111,38 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.KeyMap.ClearCompletion):
 			m.completion = nil
 			return m, Empty
+		case key.Matches(msg, m.KeyMap.PrevHistory):
+			if m.completion == nil && len(m.historys) > 0 {
+				if m.historyIndex > len(m.historys) {
+					m.historyIndex = len(m.historys)
+				}
+				if m.historyIndex > 0 {
+					m.historyIndex--
+				} else {
+					m.historyIndex = 0
+				}
+				historyValue := m.historys[m.historyIndex].Input.Model.Value()
+				logger.Debugf("HistoryIndex: %d value: %s", m.historyIndex, historyValue)
+				m.SetValue(historyValue)
+				m.SetCursor(len(historyValue))
+			}
+			logger.Debugf("HistoryIndex: %d", m.historyIndex)
+		case key.Matches(msg, m.KeyMap.NextHistory):
+			if m.completion == nil && len(m.historys) > 0 {
+				if m.historyIndex < len(m.historys)-1 {
+					m.historyIndex++
+					historyValue := m.historys[m.historyIndex].Input.Model.Value()
+					logger.Debugf("HistoryIndex: %d value: %s", m.historyIndex, historyValue)
+					m.SetValue(historyValue)
+					m.SetCursor(len(historyValue))
+				} else {
+					m.historyIndex = len(m.historys)
+					m.SetValue("")
+					m.SetCursor(0)
+					logger.Debugf("HistoryIndex: %d value: %s", m.historyIndex, "")
+				}
+			}
+			logger.Debugf("HistoryIndex: %d", m.historyIndex)
 		case key.Matches(msg, m.KeyMap.Enter):
 			value := m.Value()
 			if m.completion != nil {
@@ -174,6 +207,7 @@ func (m *Prompt) Width(w int) {
 	m.width = w
 }
 
+// AppendHistory 追加新的历史记录并将索引指向当前输入。
 func (m *Prompt) AppendHistory(outText string) {
 	out := NewOut(outText)
 	if outText == "" {
@@ -181,6 +215,7 @@ func (m *Prompt) AppendHistory(outText string) {
 	}
 	h := NewHistory(m.input, out)
 	m.historys = append(m.historys, h)
+	m.historyIndex = len(m.historys)
 }
 
 func (m *Prompt) OutFunc(f OutFunc) {

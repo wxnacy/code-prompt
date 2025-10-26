@@ -20,6 +20,14 @@ func DefaultPromptKeyMap() PromptKeyMap {
 		),
 		NextCompletion: defaultCompletionKeyMap.NextCompletion,
 		PrevCompletion: defaultCompletionKeyMap.PrevCompletion,
+		NextHistory: key.NewBinding(
+			key.WithKeys("down", "ctrl+n"),
+			key.WithHelp("↓/ctrl+n", "next history"),
+		),
+		PrevHistory: key.NewBinding(
+			key.WithKeys("up", "ctrl+p"),
+			key.WithHelp("↑/ctrl+p", "prev history"),
+		),
 	}
 }
 
@@ -30,25 +38,36 @@ type PromptKeyMap struct {
 	ClearCompletion key.Binding // ShortHelp ListenKeys
 
 	// FullHelp
-	Enter key.Binding
-	Exit  key.Binding
+	NextHistory key.Binding // ListenKeys
+	PrevHistory key.Binding // ListenKeys
+
+	// FullHelp
+	Enter key.Binding // ListenKeys
+	Exit  key.Binding // ListenKeys
 }
 
 func (km PromptKeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{km.NextCompletion, km.PrevCompletion, km.ClearCompletion}
 }
 
+// FullHelp 返回所有快捷键的帮助信息。
 func (km PromptKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{km.NextCompletion, km.PrevCompletion, km.ClearCompletion},
+		{km.NextHistory, km.PrevHistory},
 		{km.Exit, km.Enter},
 	}
 }
 
+// ListenKeys 返回需要监听的快捷键绑定列表。
 func (km PromptKeyMap) ListenKeys() []key.Binding {
 	return []key.Binding{
 		km.NextCompletion,
 		km.PrevCompletion,
 		km.ClearCompletion,
+		km.NextHistory,
+		km.PrevHistory,
+		km.Enter,
+		km.Exit,
 	}
 }
