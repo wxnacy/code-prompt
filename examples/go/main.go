@@ -25,8 +25,10 @@ import (
 )
 
 var (
-	logger      = log.GetLogger()
-	fileVersion = 0
+	logger          = log.GetLogger()
+	fileVersion     = 0
+	errCreateLSP    = errors.New("create lsp client")
+	errWaitForReady = errors.New("wait gopls ready")
 )
 
 func main() {
@@ -39,40 +41,22 @@ func main() {
 	os.MkdirAll(codeDir, 0o755)
 	codePath := filepath.Join(codeDir, "main.go")
 
-	// 构建文件URI和工作区URI
-	fileURI := "file://" + codePath
-	// workspaceURI := "file://" + workspace // This was unused, keeping it commented
-
-	// 使用可取消上下文防止长时间运行后被统一超时取消
-	logger.Debugf("创建可取消的上下文")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel, client, err := prepareLSP(workspace, codePath)
+	if err != nil {
+		if errors.Is(err, errCreateLSP) {
+			logger.Errorf("创建LSP客户端失败: %v", err)
+			fmt.Println("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
+			fmt.Println("2. 请确保go版本 >= 1.16")
+			fmt.Println("3. 检查PATH环境变量是否包含gopls")
+		} else if errors.Is(err, errWaitForReady) {
+			logger.Errorf("gopls未能成功加载: %v", err)
+		} else {
+			logger.Errorf("初始化gopls失败: %v", err)
+		}
+		return
+	}
 	defer cancel()
-
-	logger.Infof("正在启动gopls并建立连接...")
-	// 创建LSP客户端
-	client, err := lsp.NewLSPClient(ctx, workspace, codePath)
-	if err != nil {
-		logger.Errorf("创建LSP客户端失败: %v", err)
-		fmt.Println("1. 请确保gopls已安装: go install golang.org/x/tools/gopls@latest")
-		fmt.Println("2. 请确保go版本 >= 1.16")
-		fmt.Println("3. 检查PATH环境变量是否包含gopls")
-		return
-	}
 	defer client.Close()
-
-	// Notify server that we have a file open
-	fileVersion++
-	err = client.DidOpen(ctx, fileURI, "go", fileVersion, "")
-	if err != nil {
-		logger.Errorf("Initial DidOpen failed: %v", err)
-	}
-
-	fmt.Println("正在等待gopls加载项目包，请稍候...")
-	if err := client.WaitForReady(ctx); err != nil {
-		logger.Errorf("gopls未能成功加载: %v", err)
-		return
-	}
-	fmt.Println("gopls已就绪，您可以开始输入了！")
 
 	p := prompt.NewPrompt(
 		prompt.WithOutFunc(insertCodeAndRun),
@@ -85,6 +69,35 @@ func main() {
 	if err != nil {
 		logger.Errorf("go prompt err %v", err)
 	}
+}
+
+func prepareLSP(workspace, codePath string) (context.Context, context.CancelFunc, *lsp.LSPClient, error) {
+	// 使用可取消上下文防止长时间运行后被统一超时取消
+	logger.Debugf("创建可取消的上下文")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	logger.Infof("正在启动gopls并建立连接...")
+	client, err := lsp.NewLSPClient(ctx, workspace, codePath)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, fmt.Errorf("%w: %w", errCreateLSP, err)
+	}
+
+	fileURI := "file://" + codePath
+	fileVersion++
+	if err := client.DidOpen(ctx, fileURI, "go", fileVersion, ""); err != nil {
+		logger.Errorf("Initial DidOpen failed: %v", err)
+	}
+
+	fmt.Println("正在等待gopls加载项目包，请稍候...")
+	if err := client.WaitForReady(ctx); err != nil {
+		client.Close()
+		cancel()
+		return nil, nil, nil, fmt.Errorf("%w: %w", errWaitForReady, err)
+	}
+	fmt.Println("gopls已就绪，您可以开始输入了！")
+
+	return ctx, cancel, client, nil
 }
 
 func completionSelectFunc(p *prompt.Prompt, input string, cursor int, selected prompt.CompletionItem) {
