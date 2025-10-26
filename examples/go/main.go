@@ -58,13 +58,21 @@ func main() {
 	defer cancel()
 	defer client.Close()
 
-	p := prompt.NewPrompt(
-		prompt.WithOutFunc(insertCodeAndRun),
-		prompt.WithCompletionFunc(func(input string, cursor int) []prompt.CompletionItem {
-			return completionFunc(input, cursor, client, ctx)
-		}),
-		prompt.WithCompletionSelectFunc(prompt.DefaultCompletionLSPSelectFunc),
-	)
+	// p := prompt.NewPrompt(
+	// prompt.WithOutFunc(insertCodeAndRun),
+	// prompt.WithCompletionFunc(func(input string, cursor int) []prompt.CompletionItem {
+	// return completionFunc(input, cursor, client, ctx)
+	// }),
+	// prompt.WithCompletionSelectFunc(prompt.DefaultCompletionLSPSelectFunc),
+	// )
+
+	_completionFunc := func(input string, cursor int) []prompt.CompletionItem {
+		return completionFunc(input, cursor, client, ctx)
+	}
+	p := prompt.NewPrompt()
+	p.OutFunc(insertCodeAndRun)
+	p.CompletionSelectFunc(prompt.DefaultCompletionLSPSelectFunc)
+	p.CompletionFunc(_completionFunc)
 	err = tui.NewTerminal(p).Run()
 	if err != nil {
 		logger.Errorf("go prompt err %v", err)

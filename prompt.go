@@ -183,8 +183,20 @@ func (m *Prompt) AppendHistory(outText string) {
 	m.historys = append(m.historys, h)
 }
 
+func (m *Prompt) OutFunc(f OutFunc) {
+	WithOutFunc(f)(m)
+}
+
+func (m *Prompt) Completions(items []CompletionItem) {
+	WithCompletions(items)(m)
+}
+
 func (m *Prompt) CompletionFunc(f CompletionFunc) {
 	m.completionFunc = f
+}
+
+func (m *Prompt) CompletionSelectFunc(f CompletionSelectFunc) {
+	WithCompletionSelectFunc(f)(m)
 }
 
 func (m *Prompt) DefaultCompletionFunc(input string, cursor int) []CompletionItem {
