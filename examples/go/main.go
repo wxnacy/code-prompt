@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sirupsen/logrus"
 	prompt "github.com/wxnacy/code-prompt"
@@ -42,9 +43,9 @@ func main() {
 	fileURI := "file://" + codePath
 	// workspaceURI := "file://" + workspace // This was unused, keeping it commented
 
-    // 使用可取消上下文防止长时间运行后被统一超时取消
-    logger.Debugf("创建可取消的上下文")
-    ctx, cancel := context.WithCancel(context.Background())
+	// 使用可取消上下文防止长时间运行后被统一超时取消
+	logger.Debugf("创建可取消的上下文")
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	logger.Infof("正在启动gopls并建立连接...")
@@ -109,7 +110,34 @@ func completionSelectFunc(p *prompt.Prompt, input string, cursor int, selected p
 	p.SetCursor(newCursor)
 }
 
+// 补全方法
+// 功能需求:
+// - 根据 input_suffix 和 cursor 光标结合确认补全的索引
+// - 需要判断光标前面的字符是否适合补全，比如括号结尾和空等不适合补全的字符则不进行补全
 func completionFunc(input string, cursor int, client *lsp.LSPClient, ctx context.Context) []prompt.CompletionItem {
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(input) {
+		cursor = len(input)
+	}
+
+	inputBefore := input[:cursor]
+	if len(inputBefore) == 0 {
+		return nil
+	}
+
+	prevChar, _ := utf8.DecodeLastRuneInString(inputBefore)
+	if prevChar == utf8.RuneError {
+		return nil
+	}
+
+	if strings.ContainsRune(" \t\n(){}[]", prevChar) {
+		return nil
+	}
+
+	inputAfter := input[cursor:]
+
 	fileVersion++
 	// 根据输入，使用 client 获取补全结果，代码临时存放在 client.fileURI 中
 	tpl := `package main
@@ -118,9 +146,8 @@ func main() {
 	// 在这里我们使用fmt包，触发补全
 	%s
 }`
-	// TODO: 我希望通过插入 input_suffix 来获取输入位置结尾来获取补全索引，但是计算的有点问题，帮我改下
 	input_suffix := "// :INPUT"
-	code := fmt.Sprintf(tpl, input+input_suffix)
+	code := fmt.Sprintf(tpl, inputBefore+input_suffix+inputAfter)
 
 	// 从 file URI 中获取文件路径
 	filePath := strings.ReplaceAll(client.GetFileURI(), "file://", "")
@@ -132,11 +159,11 @@ func main() {
 		return nil
 	}
 
-    // 为单次补全请求设置独立的超时，避免复用过期上下文
-    callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-    defer cancel()
+	// 为单次补全请求设置独立的超时，避免复用过期上下文
+	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-    err = client.DidOpen(callCtx, client.GetFileURI(), "go", fileVersion, code)
+	err = client.DidOpen(callCtx, client.GetFileURI(), "go", fileVersion, code)
 	if err != nil {
 		logger.Errorf("textDocument/didOpen failed: %v", err)
 	}
@@ -157,7 +184,7 @@ func main() {
 	col := len(linesBeforeSuffix[len(linesBeforeSuffix)-1])
 
 	// 获取补全
-    completions, err := client.GetCompletions(callCtx, row, col)
+	completions, err := client.GetCompletions(callCtx, row, col)
 	if err != nil {
 		logger.Errorf("获取代码补全失败: %v", err)
 		return nil
