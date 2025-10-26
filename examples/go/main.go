@@ -42,9 +42,9 @@ func main() {
 	fileURI := "file://" + codePath
 	// workspaceURI := "file://" + workspace // This was unused, keeping it commented
 
-	// 创建带超时的上下文
-	logger.Debugf("创建带超时的上下文")
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Generous timeout
+    // 使用可取消上下文防止长时间运行后被统一超时取消
+    logger.Debugf("创建可取消的上下文")
+    ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	logger.Infof("正在启动gopls并建立连接...")
@@ -132,7 +132,11 @@ func main() {
 		return nil
 	}
 
-	err = client.DidOpen(ctx, client.GetFileURI(), "go", fileVersion, code)
+    // 为单次补全请求设置独立的超时，避免复用过期上下文
+    callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+    defer cancel()
+
+    err = client.DidOpen(callCtx, client.GetFileURI(), "go", fileVersion, code)
 	if err != nil {
 		logger.Errorf("textDocument/didOpen failed: %v", err)
 	}
@@ -153,7 +157,7 @@ func main() {
 	col := len(linesBeforeSuffix[len(linesBeforeSuffix)-1])
 
 	// 获取补全
-	completions, err := client.GetCompletions(ctx, row, col)
+    completions, err := client.GetCompletions(callCtx, row, col)
 	if err != nil {
 		logger.Errorf("获取代码补全失败: %v", err)
 		return nil
