@@ -1,13 +1,17 @@
 package prompt
 
 import (
+	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/wxnacy/code-prompt/pkg/log"
+	"golang.org/x/sys/unix"
 )
 
 type (
@@ -18,6 +22,13 @@ type (
 	EmptyMsg struct{}
 )
 
+// HistoryItem 记录单条历史信息，遵循 zsh_history 的时间戳与耗时方案。
+type HistoryItem struct {
+	Timestamp       int64  // 执行命令的时间戳（秒）
+	DurationSeconds int64  // 命令执行耗时（秒）
+	Command         string // 执行的命令内容
+}
+
 var logger = log.GetLogger()
 
 func Empty() tea.Msg {
@@ -25,18 +36,32 @@ func Empty() tea.Msg {
 }
 
 func NewPrompt(opts ...Option) *Prompt {
+	defaultPath := defaultHistoryFilePath()
+	resolvedPath, err := resolveHistoryFilePath(defaultPath)
+	if err != nil {
+		logger.Warnf("默认历史文件路径解析失败: %v", err)
+		resolvedPath = ""
+	}
 	m := &Prompt{
-		width:    100,
-		prompt:   ">>> ",
-		KeyMap:   DefaultPromptKeyMap(),
-		outFunc:  func(input string) string { return input },
-		historys: make([]*History, 0),
+		width:           100,
+		prompt:          ">>> ",
+		KeyMap:          DefaultPromptKeyMap(),
+		outFunc:         func(input string) string { return input },
+		historys:        make([]*History, 0),
+		historyItems:    make([]HistoryItem, 0),
+		historyFilePath: resolvedPath,
 	}
 	WithCompletionFunc(m.DefaultCompletionFunc)(m)
 	WithCompletionSelectFunc(DefaultCompletionSelectFunc)(m)
 	for _, opt := range opts {
 		opt(m)
 	}
+	if err := m.refreshHistoryItemsFromFile(); err != nil {
+		logger.Warnf("加载历史文件失败: %v", err)
+	}
+	m.historyMu.Lock()
+	m.historyIndex = len(m.historyItems)
+	m.historyMu.Unlock()
 	m.input = m.NewInput()
 	return m
 }
@@ -48,8 +73,11 @@ type Prompt struct {
 	prompt string
 
 	// history
-	historys     []*History
-	historyIndex int // 历史记录索引
+	historys        []*History
+	historyItems    []HistoryItem
+	historyIndex    int // 历史记录索引，等于 len(historyItems) 表示当前输入
+	historyFilePath string
+	historyMu       sync.Mutex
 
 	// completion
 	completionItems      []CompletionItem
@@ -112,37 +140,83 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.completion = nil
 			return m, Empty
 		case key.Matches(msg, m.KeyMap.PrevHistory):
-			if m.completion == nil && len(m.historys) > 0 {
-				if m.historyIndex > len(m.historys) {
-					m.historyIndex = len(m.historys)
+			// 向上翻找记录
+			if m.completion == nil {
+				if err := m.refreshHistoryItemsFromFile(); err != nil {
+					logger.Warnf("同步历史失败: %v", err)
 				}
-				if m.historyIndex > 0 {
-					m.historyIndex--
-				} else {
+				var (
+					historyValue string
+					hasHistory   bool
+					idx          int
+				)
+				m.historyMu.Lock()
+				total := len(m.historyItems)
+				if total == 0 {
 					m.historyIndex = 0
+				} else {
+					if m.historyIndex > total {
+						m.historyIndex = total
+					}
+					if m.historyIndex > 0 {
+						m.historyIndex--
+					} else {
+						m.historyIndex = 0
+					}
+					historyValue = m.historyItems[m.historyIndex].Command
+					hasHistory = true
 				}
-				historyValue := m.historys[m.historyIndex].Input.Model.Value()
-				logger.Debugf("HistoryIndex: %d value: %s", m.historyIndex, historyValue)
-				m.SetValue(historyValue)
-				m.SetCursor(len(historyValue))
-			}
-			logger.Debugf("HistoryIndex: %d", m.historyIndex)
-		case key.Matches(msg, m.KeyMap.NextHistory):
-			if m.completion == nil && len(m.historys) > 0 {
-				if m.historyIndex < len(m.historys)-1 {
-					m.historyIndex++
-					historyValue := m.historys[m.historyIndex].Input.Model.Value()
-					logger.Debugf("HistoryIndex: %d value: %s", m.historyIndex, historyValue)
+				idx = m.historyIndex
+				m.historyMu.Unlock()
+				if hasHistory {
+					logger.Debugf("HistoryIndex: %d value: %s", idx, historyValue)
 					m.SetValue(historyValue)
 					m.SetCursor(len(historyValue))
 				} else {
-					m.historyIndex = len(m.historys)
-					m.SetValue("")
-					m.SetCursor(0)
-					logger.Debugf("HistoryIndex: %d value: %s", m.historyIndex, "")
+					logger.Debugf("HistoryIndex: %d", idx)
 				}
 			}
-			logger.Debugf("HistoryIndex: %d", m.historyIndex)
+		case key.Matches(msg, m.KeyMap.NextHistory):
+			// 向下翻找记录
+			if m.completion == nil {
+				if err := m.refreshHistoryItemsFromFile(); err != nil {
+					logger.Warnf("同步历史失败: %v", err)
+				}
+				var (
+					historyValue string
+					hasHistory   bool
+					resetEmpty   bool
+					idx          int
+				)
+				m.historyMu.Lock()
+				total := len(m.historyItems)
+				switch {
+				case total == 0:
+					m.historyIndex = 0
+				case m.historyIndex < total-1:
+					m.historyIndex++
+					historyValue = m.historyItems[m.historyIndex].Command
+					hasHistory = true
+				case total > 0:
+					m.historyIndex = total
+					resetEmpty = true
+				default:
+					m.historyIndex = 0
+				}
+				idx = m.historyIndex
+				m.historyMu.Unlock()
+				if hasHistory {
+					logger.Debugf("HistoryIndex: %d value: %s", idx, historyValue)
+					m.SetValue(historyValue)
+					m.SetCursor(len(historyValue))
+				} else if resetEmpty {
+					logger.Debugf("HistoryIndex: %d value: %s", idx, "")
+					m.SetValue("")
+					m.SetCursor(0)
+				} else {
+					logger.Debugf("HistoryIndex: %d", idx)
+				}
+			}
 		case key.Matches(msg, m.KeyMap.Enter):
 			value := m.Value()
 			if m.completion != nil {
@@ -155,11 +229,13 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.completion = nil
 			} else {
 				// 进行输出
+				execStart := time.Now()
 				out := value
 				if m.outFunc != nil {
 					out = m.outFunc(value)
 				}
-				m.AppendHistory(out)
+				duration := time.Since(execStart)
+				m.AppendHistory(value, out, execStart, duration)
 				m.input = m.NewInput()
 			}
 			return m, Empty
@@ -205,17 +281,6 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Prompt) Width(w int) {
 	m.width = w
-}
-
-// AppendHistory 追加新的历史记录并将索引指向当前输入。
-func (m *Prompt) AppendHistory(outText string) {
-	out := NewOut(outText)
-	if outText == "" {
-		out = nil
-	}
-	h := NewHistory(m.input, out)
-	m.historys = append(m.historys, h)
-	m.historyIndex = len(m.historys)
 }
 
 func (m *Prompt) OutFunc(f OutFunc) {
@@ -283,6 +348,84 @@ func (m Prompt) SetCursor(pos int) {
 
 // Input end   ==================
 
+// History begin ================
+
+// AppendHistory 将执行结果写入历史记录，并同步内存与文件内容。
+func (m *Prompt) AppendHistory(command string, outText string, startedAt time.Time, duration time.Duration) {
+	out := NewOut(outText)
+	if outText == "" {
+		out = nil
+	}
+	h := NewHistory(m.input, out)
+	m.historys = append(m.historys, h)
+
+	item := HistoryItem{
+		Timestamp:       startedAt.Unix(),
+		DurationSeconds: int64(duration / time.Second),
+		Command:         command,
+	}
+	if item.DurationSeconds < 0 {
+		item.DurationSeconds = 0
+	}
+	m.historyMu.Lock()
+	m.historyItems = append(m.historyItems, item)
+	m.historyIndex = len(m.historyItems)
+	m.historyMu.Unlock()
+
+	if err := m.appendHistoryToFile(item); err != nil {
+		logger.Warnf("写入历史文件失败: %v", err)
+	}
+}
+
+// appendHistoryToFile 将历史记录安全追加到文件中。
+func (m *Prompt) appendHistoryToFile(item HistoryItem) error {
+	if m.historyFilePath == "" {
+		return nil
+	}
+	path := m.historyFilePath
+	if err := ensureHistoryFile(path); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fd := int(file.Fd())
+	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer unix.Flock(fd, unix.LOCK_UN)
+
+	if _, err := file.WriteString(formatHistoryItem(item)); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+// refreshHistoryItemsFromFile 刷新内存中的历史记录。
+func (m *Prompt) refreshHistoryItemsFromFile() error {
+	if m.historyFilePath == "" {
+		return nil
+	}
+	items, err := readHistoryFile(m.historyFilePath)
+	if err != nil {
+		return err
+	}
+	m.historyMu.Lock()
+	if len(items) >= len(m.historyItems) {
+		m.historyItems = items
+		if m.historyIndex > len(m.historyItems) {
+			m.historyIndex = len(m.historyItems)
+		}
+	}
+	m.historyMu.Unlock()
+	return nil
+}
+
+// History end   ================
+
 type Option func(*Prompt)
 
 func WithPrompt(s string) Option {
@@ -295,6 +438,18 @@ func WithPrompt(s string) Option {
 func WithWidth(w int) Option {
 	return func(p *Prompt) {
 		p.width = w
+	}
+}
+
+// WithHistoryFile 设置历史文件路径，允许覆盖默认地址。
+func WithHistoryFile(path string) Option {
+	return func(p *Prompt) {
+		resolved, err := resolveHistoryFilePath(path)
+		if err != nil {
+			logger.Warnf("设置历史文件失败: %v", err)
+			return
+		}
+		p.historyFilePath = resolved
 	}
 }
 
