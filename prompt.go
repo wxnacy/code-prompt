@@ -215,11 +215,16 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.completion = nil
 			} else {
+				// 检查是否需要执行快速命令
 				// 进行输出
 				execStart := time.Now()
 				out := value
-				if m.outFunc != nil {
-					out = m.outFunc(value)
+				if builtionFunc, exists := IsMatchBuiltinCommandFunc(value); exists {
+					out = builtionFunc(m, value)
+				} else {
+					if m.outFunc != nil {
+						out = m.outFunc(value)
+					}
 				}
 				duration := time.Since(execStart)
 				m.AppendHistory(value, out, execStart, duration)
