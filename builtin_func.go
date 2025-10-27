@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -21,8 +22,16 @@ var builtinCommandFuncItems = []BuiltinCommandFuncItem{
 		Desc:    "show command history",
 		Func: func(p *Prompt, command string) string {
 			outs := make([]string, 0)
+			// 计算右对齐的宽度：使用最大索引的位数（len(historyItems)-1）作为宽度
+			// 例如有 120 条记录，则最大索引为 119，位数为 3，最终以 3 宽度右对齐
+			width := 1
+			if n := len(p.historyItems); n > 0 {
+				width = len(strconv.Itoa(n - 1))
+			}
 			for i, history := range p.historyItems {
-				outs = append(outs, fmt.Sprintf("%d %s", i, history.Command))
+				// 使用动态宽度占位符 %*d 实现右对齐输出索引
+				// 例如：  1 cmd、 23 cmd、123 cmd
+				outs = append(outs, fmt.Sprintf("%*d %s", width, i, history.Command))
 			}
 			return strings.Join(outs, "\n")
 		},
