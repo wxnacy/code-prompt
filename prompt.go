@@ -350,11 +350,23 @@ func (m *Prompt) AppendHistory(command string, outText string, startedAt time.Ti
 	h := NewHistory(m.input, out)
 	m.historys = append(m.historys, h)
 
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		// 仅记录包含有效字符的历史项
+		return
+	}
+
 	item := HistoryItem{
 		Timestamp:       startedAt.Unix(),
 		DurationSeconds: int64(duration / time.Second),
 		Command:         command,
 	}
+
+	m.AppendHistoryItem(item)
+}
+
+// AppendHistoryItem 将历史项写入内存，并同步到历史文件中。
+func (m *Prompt) AppendHistoryItem(item HistoryItem) {
 	if item.DurationSeconds < 0 {
 		item.DurationSeconds = 0
 	}
