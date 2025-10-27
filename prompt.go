@@ -50,9 +50,6 @@ func NewPrompt(opts ...Option) *Prompt {
 	for _, opt := range opts {
 		opt(m)
 	}
-	m.historyMu.Lock()
-	m.historyIndex = len(m.historyItems)
-	m.historyMu.Unlock()
 	m.input = m.NewInput()
 	return m
 }
@@ -448,6 +445,9 @@ func WithHistoryFile(path string) Option {
 		if err := p.refreshHistoryItemsFromFile(); err != nil {
 			logger.Warnf("加载历史文件失败: %v", err)
 		}
+		p.historyMu.Lock()
+		p.historyIndex = len(p.historyItems)
+		p.historyMu.Unlock()
 	}
 }
 
