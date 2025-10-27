@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"strings"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -10,6 +11,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/wxnacy/code-prompt/pkg/tui"
 )
+
+// 简单匹配字符串前缀补全方法
+func simpleCompletion(completions []CompletionItem, input string, cursor int) []CompletionItem {
+	newCompletionItems := make([]CompletionItem, 0)
+	for _, item := range completions {
+		if strings.HasPrefix(item.Text, input) {
+			newCompletionItems = append(newCompletionItems, item)
+		}
+	}
+	logger.Debugf("Completion items length %d", len(newCompletionItems))
+	return newCompletionItems
+}
 
 type CompletionItem struct {
 	Text string

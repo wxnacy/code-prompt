@@ -16,7 +16,8 @@ func main() {
 		prompt.WithPrompt("> "),
 		prompt.WithCompletions([]prompt.CompletionItem{
 			{Text: "fmt.Printf", Desc: "func"},
-			{Text: "fmt.Println", Desc: "func"},
+			{Text: "fmt.Printf", Desc: "func"},
+			{Text: "time.Now()", Desc: "func"},
 		}),
 	)
 	err := tui.NewTerminal(p).Run()

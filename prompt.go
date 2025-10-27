@@ -258,16 +258,8 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = m.UpdateInput(msg)
 			cmds = append(cmds, cmd)
 
-			value := m.Value()
-			// 使用补全方法获取自全列表
-			if m.completionFunc != nil {
-				newCompletionItems := m.completionFunc(value, m.Cursor())
-				if newCompletionItems != nil && len(newCompletionItems) > 0 {
-					m.completion = NewCompletion(newCompletionItems)
-				} else {
-					m.completion = nil
-				}
-			}
+			// 处理获取补全逻辑
+			m.handleCompletion(m.Value(), m.Cursor())
 		}
 		// 组件键位监听 end
 		return m, tea.Batch(cmds...)
@@ -285,6 +277,8 @@ func (m *Prompt) OutFunc(f OutFunc) {
 	WithOutFunc(f)(m)
 }
 
+// Completion begin =============
+
 func (m *Prompt) Completions(items []CompletionItem) {
 	WithCompletions(items)(m)
 }
@@ -298,14 +292,7 @@ func (m *Prompt) CompletionSelectFunc(f CompletionSelectFunc) {
 }
 
 func (m *Prompt) DefaultCompletionFunc(input string, cursor int) []CompletionItem {
-	newCompletionItems := make([]CompletionItem, 0)
-	for _, item := range m.completionItems {
-		if strings.HasPrefix(item.Text, input) {
-			newCompletionItems = append(newCompletionItems, item)
-		}
-	}
-	logger.Debugf("Completion items length %d", len(newCompletionItems))
-	return newCompletionItems
+	return simpleCompletion(m.completionItems, input, cursor)
 }
 
 func DefaultCompletionSelectFunc(p *Prompt, input string, cursor int, selected CompletionItem) {
@@ -319,6 +306,48 @@ func (m Prompt) GetCompletionView() string {
 	}
 	return ""
 }
+
+// 处理补全逻辑
+// 功能需求:
+// - 优先使用内置函数补全，如果补全到信息直接返回
+// - 然后进行正常补全逻辑
+func (m *Prompt) handleCompletion(input string, cursor int) {
+	setCompletion := func(items []CompletionItem) {
+		if items != nil && len(items) > 0 {
+			m.completion = NewCompletion(items)
+		} else {
+			m.completion = nil
+		}
+	}
+
+	// 优先使用内置函数补全
+	if strings.HasPrefix(input, "/") {
+		// 处理内置方法补全
+		builtinCompletionItems := GetBuiltinCommandCompletions()
+		if len(builtinCompletionItems) > 0 {
+			items := simpleCompletion(builtinCompletionItems, input, cursor)
+			setCompletion(items)
+			if m.completion != nil {
+				return
+			}
+		}
+	}
+
+	// 走到这里说明内置函数没有获取到补全信息
+
+	// 进行正常补全
+	// 使用补全方法获取自全列表
+	if m.completionFunc != nil {
+		newCompletionItems := m.completionFunc(input, cursor)
+		if newCompletionItems != nil && len(newCompletionItems) > 0 {
+			m.completion = NewCompletion(newCompletionItems)
+		} else {
+			m.completion = nil
+		}
+	}
+}
+
+// Completion end   =============
 
 // Input begin ==================
 
@@ -438,48 +467,48 @@ func (m *Prompt) refreshHistoryItemsFromFile() error {
 // handleBangQuickExec 处理以 ! 开头的快速历史执行语法（如：!11）。
 // 返回值表示是否已拦截处理该输入（true 表示已处理，外层无需继续执行）。
 func (m *Prompt) handleBangQuickExec(value string) bool {
-    // 非 bang 语法，直接透传
-    if !strings.HasPrefix(value, "!") {
-        return false
-    }
+	// 非 bang 语法，直接透传
+	if !strings.HasPrefix(value, "!") {
+		return false
+	}
 
-    // 同步最新历史，避免并发或多进程写入导致的视图滞后
-    if err := m.refreshHistoryItemsFromFile(); err != nil {
-        logger.Warnf("同步历史失败: %v", err)
-    }
+	// 同步最新历史，避免并发或多进程写入导致的视图滞后
+	if err := m.refreshHistoryItemsFromFile(); err != nil {
+		logger.Warnf("同步历史失败: %v", err)
+	}
 
-    // 去除前缀并裁剪空格
-    cmdNumString := strings.TrimSpace(strings.TrimPrefix(value, "!"))
-    if cmdNumString == "" {
-        out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
-        m.AppendHistory(value, out)
-        m.input = m.NewInput()
-        return true
-    }
+	// 去除前缀并裁剪空格
+	cmdNumString := strings.TrimSpace(strings.TrimPrefix(value, "!"))
+	if cmdNumString == "" {
+		out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
+		m.AppendHistory(value, out)
+		m.input = m.NewInput()
+		return true
+	}
 
-    // 仅允许十进制数字，其他情况按不存在处理
-    n, err := strconv.Atoi(cmdNumString)
-    if err != nil {
-        out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
-        m.AppendHistory(value, out)
-        m.input = m.NewInput()
-        return true
-    }
+	// 仅允许十进制数字，其他情况按不存在处理
+	n, err := strconv.Atoi(cmdNumString)
+	if err != nil {
+		out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
+		m.AppendHistory(value, out)
+		m.input = m.NewInput()
+		return true
+	}
 
-    // 在锁内读取历史并设置输入
-    m.historyMu.Lock()
-    defer m.historyMu.Unlock()
-    if n > -1 && n < len(m.historyItems) {
-        historyCmd := m.historyItems[n].Command
-        // 仅将输入框替换为历史命令，不直接执行
-        m.SetValue(historyCmd)
-        m.SetCursor(len(historyCmd))
-    } else {
-        out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
-        m.AppendHistory(value, out)
-        m.input = m.NewInput()
-    }
-    return true
+	// 在锁内读取历史并设置输入
+	m.historyMu.Lock()
+	defer m.historyMu.Unlock()
+	if n > -1 && n < len(m.historyItems) {
+		historyCmd := m.historyItems[n].Command
+		// 仅将输入框替换为历史命令，不直接执行
+		m.SetValue(historyCmd)
+		m.SetCursor(len(historyCmd))
+	} else {
+		out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
+		m.AppendHistory(value, out)
+		m.input = m.NewInput()
+	}
+	return true
 }
 
 // History end   ================
