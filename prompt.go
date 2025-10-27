@@ -36,12 +36,6 @@ func Empty() tea.Msg {
 }
 
 func NewPrompt(opts ...Option) *Prompt {
-	defaultPath := defaultHistoryFilePath()
-	resolvedPath, err := resolveHistoryFilePath(defaultPath)
-	if err != nil {
-		logger.Warnf("默认历史文件路径解析失败: %v", err)
-		resolvedPath = ""
-	}
 	m := &Prompt{
 		width:           100,
 		prompt:          ">>> ",
@@ -49,15 +43,12 @@ func NewPrompt(opts ...Option) *Prompt {
 		outFunc:         func(input string) string { return input },
 		historys:        make([]*History, 0),
 		historyItems:    make([]HistoryItem, 0),
-		historyFilePath: resolvedPath,
+		historyFilePath: "",
 	}
 	WithCompletionFunc(m.DefaultCompletionFunc)(m)
 	WithCompletionSelectFunc(DefaultCompletionSelectFunc)(m)
 	for _, opt := range opts {
 		opt(m)
-	}
-	if err := m.refreshHistoryItemsFromFile(); err != nil {
-		logger.Warnf("加载历史文件失败: %v", err)
 	}
 	m.historyMu.Lock()
 	m.historyIndex = len(m.historyItems)
@@ -350,6 +341,10 @@ func (m Prompt) SetCursor(pos int) {
 
 // History begin ================
 
+func (m *Prompt) HistoryFile(p string) {
+	WithHistoryFile(p)(m)
+}
+
 // AppendHistory 将执行结果写入历史记录，并同步内存与文件内容。
 func (m *Prompt) AppendHistory(command string, outText string, startedAt time.Time, duration time.Duration) {
 	out := NewOut(outText)
@@ -450,6 +445,9 @@ func WithHistoryFile(path string) Option {
 			return
 		}
 		p.historyFilePath = resolved
+		if err := p.refreshHistoryItemsFromFile(); err != nil {
+			logger.Warnf("加载历史文件失败: %v", err)
+		}
 	}
 }
 

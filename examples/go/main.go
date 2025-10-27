@@ -70,6 +70,7 @@ func main() {
 		return completionFunc(input, cursor, client, ctx)
 	}
 	p := prompt.NewPrompt()
+	p.HistoryFile(".go_history")
 	p.OutFunc(insertCodeAndRun)
 	p.CompletionSelectFunc(prompt.DefaultCompletionLSPSelectFunc)
 	p.CompletionFunc(_completionFunc)
