@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/wxnacy/code-prompt/pkg/log"
-	"golang.org/x/sys/unix"
 )
 
 type (
@@ -384,11 +383,12 @@ func (m *Prompt) appendHistoryToFile(item HistoryItem) error {
 	}
 	defer file.Close()
 
-	fd := int(file.Fd())
-	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+	if err := lockFile(file); err != nil {
 		return err
 	}
-	defer unix.Flock(fd, unix.LOCK_UN)
+	defer func() {
+		_ = unlockFile(file)
+	}()
 
 	if _, err := file.WriteString(formatHistoryItem(item)); err != nil {
 		return err
