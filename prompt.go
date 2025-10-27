@@ -1,7 +1,9 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -215,10 +217,13 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.completion = nil
 			} else {
-				// 检查是否需要执行快速命令
+				out := value
+				// 检查是否需要执行快速命令（如：!11）。命中后拦截并返回。
+				if m.handleBangQuickExec(value) {
+					return m, Empty
+				}
 				// 进行输出
 				execStart := time.Now()
-				out := value
 				if builtionFunc, exists := IsMatchBuiltinCommandFunc(value); exists {
 					out = builtionFunc(m, value)
 				} else {
@@ -227,7 +232,8 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				duration := time.Since(execStart)
-				m.AppendHistory(value, out, execStart, duration)
+				m.AppendHistory(value, out)
+				m.AppendHistoryItem(value, execStart, duration)
 				m.input = m.NewInput()
 			}
 			return m, Empty
@@ -346,32 +352,28 @@ func (m *Prompt) HistoryFile(p string) {
 	WithHistoryFile(p)(m)
 }
 
-// AppendHistory 将执行结果写入历史记录，并同步内存与文件内容。
-func (m *Prompt) AppendHistory(command string, outText string, startedAt time.Time, duration time.Duration) {
+// AppendHistory 将历史命令和输出添加到 View 中
+func (m *Prompt) AppendHistory(command string, outText string) {
 	out := NewOut(outText)
 	if outText == "" {
 		out = nil
 	}
 	h := NewHistory(m.input, out)
 	m.historys = append(m.historys, h)
+}
 
+// AppendHistoryItem 将历史项写入内存，并同步到历史文件中。
+func (m *Prompt) AppendHistoryItem(command string, startedAt time.Time, duration time.Duration) {
 	trimmed := strings.TrimSpace(command)
 	if trimmed == "" {
 		// 仅记录包含有效字符的历史项
 		return
 	}
-
 	item := HistoryItem{
 		Timestamp:       startedAt.Unix(),
 		DurationSeconds: int64(duration / time.Second),
 		Command:         command,
 	}
-
-	m.AppendHistoryItem(item)
-}
-
-// AppendHistoryItem 将历史项写入内存，并同步到历史文件中。
-func (m *Prompt) AppendHistoryItem(item HistoryItem) {
 	if item.DurationSeconds < 0 {
 		item.DurationSeconds = 0
 	}
@@ -431,6 +433,53 @@ func (m *Prompt) refreshHistoryItemsFromFile() error {
 	}
 	m.historyMu.Unlock()
 	return nil
+}
+
+// handleBangQuickExec 处理以 ! 开头的快速历史执行语法（如：!11）。
+// 返回值表示是否已拦截处理该输入（true 表示已处理，外层无需继续执行）。
+func (m *Prompt) handleBangQuickExec(value string) bool {
+    // 非 bang 语法，直接透传
+    if !strings.HasPrefix(value, "!") {
+        return false
+    }
+
+    // 同步最新历史，避免并发或多进程写入导致的视图滞后
+    if err := m.refreshHistoryItemsFromFile(); err != nil {
+        logger.Warnf("同步历史失败: %v", err)
+    }
+
+    // 去除前缀并裁剪空格
+    cmdNumString := strings.TrimSpace(strings.TrimPrefix(value, "!"))
+    if cmdNumString == "" {
+        out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
+        m.AppendHistory(value, out)
+        m.input = m.NewInput()
+        return true
+    }
+
+    // 仅允许十进制数字，其他情况按不存在处理
+    n, err := strconv.Atoi(cmdNumString)
+    if err != nil {
+        out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
+        m.AppendHistory(value, out)
+        m.input = m.NewInput()
+        return true
+    }
+
+    // 在锁内读取历史并设置输入
+    m.historyMu.Lock()
+    defer m.historyMu.Unlock()
+    if n > -1 && n < len(m.historyItems) {
+        historyCmd := m.historyItems[n].Command
+        // 仅将输入框替换为历史命令，不直接执行
+        m.SetValue(historyCmd)
+        m.SetCursor(len(historyCmd))
+    } else {
+        out := fmt.Sprintf("wgo: no such event: %s", cmdNumString)
+        m.AppendHistory(value, out)
+        m.input = m.NewInput()
+    }
+    return true
 }
 
 // History end   ================
