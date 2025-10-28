@@ -206,6 +206,16 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					logger.Debugf("HistoryIndex: %d", idx)
 				}
 			}
+		case key.Matches(msg, m.KeyMap.Clear):
+			// 清屏
+			m.historys = make([]*History, 0)
+			return m, Empty
+		case key.Matches(msg, m.KeyMap.GiveUp):
+			// 放弃当前命令
+			m.AppendHistory(m.Value(), "")
+			m.completion = nil
+			m.input = m.NewInput()
+			return m, Empty
 		case key.Matches(msg, m.KeyMap.Enter):
 			value := m.Value()
 			if m.completion != nil {

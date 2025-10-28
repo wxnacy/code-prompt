@@ -22,11 +22,19 @@ func DefaultPromptKeyMap() PromptKeyMap {
 		PrevCompletion: defaultCompletionKeyMap.PrevCompletion,
 		NextHistory: key.NewBinding(
 			key.WithKeys("down", "ctrl+n"),
-			key.WithHelp("↓/ctrl+n", "next history"),
+			key.WithHelp("↓/ctrl+n", "上一条历史"),
 		),
 		PrevHistory: key.NewBinding(
 			key.WithKeys("up", "ctrl+p"),
-			key.WithHelp("↑/ctrl+p", "prev history"),
+			key.WithHelp("↑/ctrl+p", "下一条历史"),
+		),
+		Clear: key.NewBinding(
+			key.WithKeys("ctrl+l"),
+			key.WithHelp("ctrl+l", "清屏"),
+		),
+		GiveUp: key.NewBinding(
+			key.WithKeys("ctrl+g"),
+			key.WithHelp("ctrl+g", "放弃当前命令"),
 		),
 	}
 }
@@ -42,6 +50,10 @@ type PromptKeyMap struct {
 	PrevHistory key.Binding // ListenKeys
 
 	// FullHelp
+	Clear  key.Binding // ListenKeys
+	GiveUp key.Binding // ListenKeys
+
+	// FullHelp
 	Enter key.Binding // ListenKeys
 	Exit  key.Binding // ListenKeys
 }
@@ -55,6 +67,7 @@ func (km PromptKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{km.NextCompletion, km.PrevCompletion, km.ClearCompletion},
 		{km.NextHistory, km.PrevHistory},
+		{km.Clear, km.GiveUp},
 		{km.Exit, km.Enter},
 	}
 }
@@ -67,6 +80,8 @@ func (km PromptKeyMap) ListenKeys() []key.Binding {
 		km.ClearCompletion,
 		km.NextHistory,
 		km.PrevHistory,
+		km.Clear,
+		km.GiveUp,
 		km.Enter,
 		km.Exit,
 	}

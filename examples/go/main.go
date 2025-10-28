@@ -325,7 +325,6 @@ func main() {
 		panic(err)
 	}
 
-	// os.Chdir(codeDir)
 	if _, err := Command("goimports", "-w", codePath); err != nil {
 		fmt.Printf("goimports failed: %v\n", err)
 	}
@@ -338,7 +337,7 @@ func main() {
 
 	// out = strings.Trim(out, "\n")
 	// out = fmt.Sprintf("-%s-", out)
-	return out + "\n"
+	return out
 }
 
 func Command(name string, args ...string) (string, error) {
