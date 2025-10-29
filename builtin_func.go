@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type (
-	BuiltinCommandFunc     func(p *Prompt, command string) string
+	BuiltinCommandFunc     func(p *Prompt, command string) (string, tea.Cmd)
 	BuiltinCommandFuncItem struct {
 		Command string             // 命令
 		Desc    string             // 描述
@@ -19,8 +21,8 @@ type (
 var builtinCommandFuncItems = []BuiltinCommandFuncItem{
 	{
 		Command: "/history", // 展示历史命令
-		Desc:    "show command history",
-		Func: func(p *Prompt, command string) string {
+		Desc:    "展示历史命令",
+		Func: func(p *Prompt, command string) (string, tea.Cmd) {
 			outs := make([]string, 0)
 			// 计算右对齐的宽度：使用最大索引的位数（len(historyItems)-1）作为宽度
 			// 例如有 120 条记录，则最大索引为 119，位数为 3，最终以 3 宽度右对齐
@@ -33,7 +35,14 @@ var builtinCommandFuncItems = []BuiltinCommandFuncItem{
 				// 例如：  1 cmd、 23 cmd、123 cmd
 				outs = append(outs, fmt.Sprintf("%*d %s", width, i, history.Command))
 			}
-			return strings.Join(outs, "\n")
+			return strings.Join(outs, "\n"), Empty
+		},
+	},
+	{
+		Command: "/exit", // 退出程序
+		Desc:    "退出程序",
+		Func: func(p *Prompt, command string) (string, tea.Cmd) {
+			return "", tea.Quit
 		},
 	},
 }

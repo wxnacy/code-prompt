@@ -235,7 +235,8 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 进行输出
 				execStart := time.Now()
 				if builtionFunc, exists := IsMatchBuiltinCommandFunc(value); exists {
-					out = builtionFunc(m, value)
+					out, cmd = builtionFunc(m, value)
+					cmds = append(cmds, cmd)
 				} else {
 					if m.outFunc != nil {
 						out = m.outFunc(value)
@@ -246,7 +247,7 @@ func (m *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.AppendHistoryItem(value, execStart, duration)
 				m.input = m.NewInput()
 			}
-			return m, Empty
+			return m, tea.Batch(cmds...)
 		}
 		// 组件键位监听 begin
 		isCompletionKey := m.completion != nil && key.Matches(msg, m.completion.KeyMap.ListenKeys()...)
